@@ -15,7 +15,13 @@
 
 #define MODULE "Main"
 
-//The maximum number of open files.
+/** The maximum length a file name can be. */
+#define MYFS_FILE_NAME_MAX_LEN 64
+
+/** The maximum length a file path can be. */
+#define MYFS_PATH_NAME_MAX_LEN 1024
+
+/** The maximum number of open files. */
 #define MYFS_FILES_OPEN_MAX 128
 
 #define MYFS_TRACE
@@ -138,6 +144,60 @@ myfs_trim(char *str) {
     }
 
     return str;
+}
+
+/**
+ * Parses a path into its directory component and copies it into a buffer.
+ *
+ * @param[in] path The path to get the directory component of.
+ * @param[out] dst The buffer to copy the directory component into.
+ * @param[in[ size The size of `buffer`.
+ * @return a pointer to `dst`.
+ */
+static const char *
+myfs_dirname(const char *path, char *dst, size_t size) {
+    char *path_dupe, *dir;
+
+    //Duplicate path since dirname() modifies the argument
+    path_dupe = strdup(path);
+
+    //Return a pointer to the modified path (eg. a \0 is added at the last '/').
+    dir = dirname(path_dupe);
+
+    //Copy into the return buffer.
+    strlcpy(dst, dir, size);
+
+    //Free the duplicated path.
+    free(path_dupe);
+
+    return dst;
+}
+
+/**
+ * Parses a path into its file name component and copies it into a buffer.
+ *
+ * @param[in] path The path to get the file name component of.
+ * @param[out] dst The buffer to copy the file name component into.
+ * @param[in[ size The size of `buffer`.
+ * @return a pointer to `dst`.
+ */
+static const char *
+myfs_basename(const char *path, char *dst, size_t size) {
+    char *path_dupe, *name;
+
+    //Duplicate path since banename() modifies the argument
+    path_dupe = strdup(path);
+
+    //Return a pointer to the modified name.
+    name = basename(path_dupe);
+
+    //Copy into the return buffer.
+    strlcpy(dst, name, size);
+
+    //Free the duplicated path.
+    free(path_dupe);
+
+    return dst;
 }
 
 /**
@@ -620,7 +680,8 @@ myfs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offse
 
 static int
 myfs_mkdir(const char *path, mode_t mode) {
-    char *path_dupe, *dir, *name;
+    char dir[MYFS_PATH_NAME_MAX_LEN + 1];
+    char name[MYFS_FILE_NAME_MAX_LEN + 1];
     bool success;
     myfs_file_t *parent;
     myfs_t *myfs;
@@ -629,27 +690,21 @@ myfs_mkdir(const char *path, mode_t mode) {
 
     myfs = (myfs_t *)fuse_get_context()->private_data;
 
-    //Get the directory(parent) to create the folder in:  /myfs/path/newfolder should be /myfs/path
-    path_dupe = strdup(path);
-    dir = dirname(path_dupe);
-    
-    parent = myfs_file_get(myfs, dir, false);
-    free(path_dupe);
+    //Get the path components.
+    myfs_dirname(path, dir, sizeof(dir));
+    myfs_basename(path, name, sizeof(name));
 
+    MYFS_LOG_TRACE("Creating folder '%s' in '%s'", name, dir);
+
+    //Get the MyFS file that represents the parent folder.
+    parent = myfs_file_get(myfs, dir, false);
     if (parent == NULL) {
         return -ENOENT;
     }
 
-    //Now get the directory name to create: /myfs/path/newfolder should be newfolder
-    path_dupe = strdup(path);
-    name = basename(path_dupe);
-
-    MYFS_LOG_TRACE("Creating folder '%s' in '%s'", name, parent->name);
-
-    //Create the file in MySQL.
+    //Create the directory in MariaDB.
     success = myfs_file_create(myfs, name, MYFS_FILE_TYPE_DIRECTORY, parent->file_id);
-
-    free(path_dupe);
+    myfs_file_free(parent);
 
     if (!success) {
         //Not really sure what to return here. If this doesn't succeed, it means the MariaDB query failed.
