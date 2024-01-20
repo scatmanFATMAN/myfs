@@ -389,14 +389,22 @@ myfs_disconnect(myfs_t *myfs) {
  */
 static bool
 myfs_file_create(myfs_t *myfs, const char *name, myfs_file_type_t type, unsigned int parent_id) {
-    char *name_esc;
+    char *name_esc, content[8];
     bool success;
 
     name_esc = db_escape(&myfs->db, name);
 
-    success = db_queryf(&myfs->db, "INSERT INTO `files` (`parent_id`,`name`,`type`,`created_on`,`last_accessed_on`,`last_modified_on`,`last_status_changed_on`)\n"
-                                   "VALUES (%u,'%s',%u,UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP())",
-                                   parent_id, name_esc, type);
+    //Files get a blank string while directories and other file types get NULL
+    if (type == MYFS_FILE_TYPE_FILE) {
+        strcpy(content, "''");
+    }
+    else {
+        strcpy(content, "NULL");
+    }
+
+    success = db_queryf(&myfs->db, "INSERT INTO `files` (`parent_id`,`name`,`type`,`content`,`created_on`,`last_accessed_on`,`last_modified_on`,`last_status_changed_on`)\n"
+                                   "VALUES (%u,'%s',%u,%s,UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP())",
+                                   parent_id, name_esc, type, content);
 
     free(name_esc);
 
@@ -430,6 +438,102 @@ myfs_file_delete(myfs_t *myfs, unsigned int file_id) {
     }
 
     return success;
+}
+
+/**
+ * Update the last accessed and last modified timestamps of the given File ID.
+ *
+ * @param[in] myfs The MyFS context.
+ * @param[in] file_id The File ID to update.
+ * @param[in] last_accessed_on The last accessed timestamp to set.
+ * @param[in] last_modified_on The last modified timestamp to set.
+ * @return `true` if the file was updated, otherwise `false`.
+ */
+static bool
+myfs_file_update_times(myfs_t *myfs, unsigned int file_id, time_t last_accessed_on, time_t last_modified_on) {
+    bool success;
+
+    success = db_queryf(&myfs->db, "UPDATE `files`\n"
+                                   "SET `last_accessed_on`=%ld,`last_modified_on`=%ld\n"
+                                   "WHERE `file_id`=%u",
+                                   last_accessed_on, last_modified_on,
+                                   file_id);
+
+    if (!success) {
+        log_err(MODULE, "Error updating times for File ID %u: %s", file_id, db_error(&myfs->db));
+    }
+
+    return success;
+}
+
+/**
+ * Sets the size of the content. This is going to be interesting functionality in a database.
+ *
+ * @param[in] myfs The MyFS context.
+ * @param[in] file_id The File ID to update.
+ * @param[in] size The size to set the content to.
+ * @return `true` if the file was updated, otherwise `false`.
+ */
+static bool
+myfs_file_set_content_size(myfs_t *myfs, unsigned int file_id, off_t size) {
+    MYSQL_RES *res;
+    MYSQL_ROW row;
+    off_t current_size = -1, diff;
+    bool success;
+
+    //First, get the current size of the content so we know if we need to shrink, grow, or do nothing.
+    res = db_selectf(&myfs->db, "SELECT IFNULL(LENGTH(`content`),0)\n"
+                                "FROM `files`\n"
+                                "WHERE `file_id`=%u",
+                                file_id);
+
+    if (res == NULL) {
+        log_err(MODULE, "Error truncating File ID %u: %s", file_id, db_error(&myfs->db));
+        return false;
+    }
+
+    row = mysql_fetch_row(res);
+    if (row != NULL) {
+        current_size = strtoul(row[0], NULL, 10);
+    }
+
+    mysql_free_result(res);
+
+    if (current_size == -1) {
+        log_err(MODULE, "Error truncating File ID %u: Not found", file_id);
+        return false;
+    }
+
+    diff = size - current_size;
+
+    //Shrink or boner?
+    if (diff > 0) {
+        //Simply add blanks onto the end
+        success = db_queryf(&myfs->db, "UPDATE `files`\n"
+                                       "SET `content`=CONCAT(IFNULL(`content`,''),REPEAT(' ',%zd))\n"
+                                       "WHERE `file_id`=%u",
+                                       diff,
+                                       file_id);
+
+        if (!success) {
+            log_err(MODULE, "Error truncating File ID %u: %s", file_id, db_error(&myfs->db));
+            return false;
+        }
+    }
+    else if (diff < 0) {
+        success = db_queryf(&myfs->db, "UPDATE `files`\n"
+                                       "SET `content`=SUBSTRING(IFNULL(`content`,''),0,%zd)\n"
+                                       "WHERE `file_id`=%u",
+                                       size,
+                                       file_id);
+
+        if (!success) {
+            log_err(MODULE, "Error truncating File ID %u: %s", file_id, db_error(&myfs->db));
+            return false;
+        }
+    }
+
+    return true;
 }
 
 static myfs_file_t * myfs_file_query(myfs_t *myfs, unsigned int file_id, bool include_children);
@@ -672,6 +776,70 @@ myfs_getattr(const char *path, struct stat *st, struct fuse_file_info *fi) {
 }
 
 static int
+myfs_truncate(const char *path, off_t size, struct fuse_file_info *fi) {
+    myfs_file_t *file;
+    myfs_t *myfs;
+    bool success;
+
+    MYFS_LOG_TRACE("Begin; Path[%s]; Size[%zu]", path, size);
+
+    myfs = (myfs_t *)fuse_get_context()->private_data;
+
+    //Get the file from the open file table
+    file = myfs->files[fi->fh];
+
+    success = myfs_file_set_content_size(myfs, file->file_id, size);
+    if (!success) {
+        //Not really sure what to return here. If this doesn't succeed, it means the MariaDB query failed.
+        return -EINVAL;
+    }
+
+    MYFS_LOG_TRACE("End");
+    return 0;
+}
+
+static int
+myfs_utimens(const char *path, const struct timespec ts[2], struct fuse_file_info *fi) {
+    myfs_file_t *file;
+    myfs_t *myfs;
+    bool success;
+
+    MYFS_LOG_TRACE("Begin; Path[%s]; atime[%ld]; mtime[%ld]", path, ts[0].tv_sec, ts[1].tv_sec);
+
+    //TODO: file info always seems to be NULL? The file should be open though
+
+    if (fi == NULL) {
+        MYFS_LOG_TRACE("FileInfo is NULL");
+    }
+    else {
+        myfs = (myfs_t *)fuse_get_context()->private_data;
+
+        //Get the file from the open file table
+        file = myfs->files[fi->fh];
+
+        success = myfs_file_update_times(myfs, file->file_id, ts[0].tv_sec, ts[1].tv_sec);
+        if (!success) {
+            //Not really sure what to return here. If this doesn't succeed, it means the MariaDB query failed.
+            return -EINVAL;
+        }
+    }
+
+    MYFS_LOG_TRACE("End");
+    return 0;
+}
+
+static int
+myfs_chown(const char *path, uid_t uid, gid_t gid, struct fuse_file_info *fi) {
+    MYFS_LOG_TRACE("Begin; Path[%s]", path);
+
+    //This callback needs to be implemented for FUSE but MyFS doesn't need it since all user/groups are inherited by the user/group running the file system.
+
+    MYFS_LOG_TRACE("End");
+
+    return 0;
+}
+
+static int
 myfs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags) {
     myfs_file_t *file;
     myfs_t *myfs;
@@ -681,6 +849,7 @@ myfs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offse
 
     myfs = (myfs_t *)fuse_get_context()->private_data;
 
+    //TODO: Implement opendir so we can use fi->fh instead of finding the file again
     file = myfs_file_get(myfs, path, true);
     if (file == NULL) {
         return -ENOENT;
@@ -771,6 +940,79 @@ myfs_mkdir(const char *path, mode_t mode) {
     return 0;
 }
 
+//TODO: This also is supposed to open the file once it's created so we can call most of myfs_open() somehow 
+static int
+myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
+    char dir[MYFS_PATH_NAME_MAX_LEN + 1];
+    char name[MYFS_FILE_NAME_MAX_LEN + 1];
+    bool success;
+    uint64_t fh = 0;
+    myfs_file_t *parent, *file;
+    myfs_t *myfs;
+
+    MYFS_LOG_TRACE("Begin; Path[%s]", path);
+
+    myfs = (myfs_t *)fuse_get_context()->private_data;
+
+    //Get the path components.
+    myfs_dirname(path, dir, sizeof(dir));
+    myfs_basename(path, name, sizeof(name));
+
+    MYFS_LOG_TRACE("Creating file '%s' in '%s'", name, dir);
+
+    //Get the MyFS file that represents the parent folder.
+    parent = myfs_file_get(myfs, dir, false);
+    if (parent == NULL) {
+        return -ENOENT;
+    }
+
+    //Create the file in MariaDB.
+    success = myfs_file_create(myfs, name, MYFS_FILE_TYPE_FILE, parent->file_id);
+    myfs_file_free(parent);
+
+    if (!success) {
+        //Not really sure what to return here. If this doesn't succeed, it means the MariaDB query failed.
+        return -EINVAL;
+    }
+
+    //Look for the first available file handle.
+    for (fh = 0; fh < MYFS_FILES_OPEN_MAX; fh++) {
+        if (myfs->files[fh] == NULL) {
+            break;
+        }
+    }
+
+    if (fh == MYFS_FILES_OPEN_MAX) {
+        log_err(MODULE, "Error opening file '%s': Maximum number of files are open", path);
+        return -EMFILE;
+    }
+
+    MYFS_LOG_TRACE("Got FileHandle[%zu]", fh);
+
+    file = myfs_file_get(myfs, path, false);
+    if (file == NULL) {
+        return -ENOENT;
+    }
+
+    //Put the file into the open files table
+    myfs->files[fh] = file;
+
+    //Put the file handle into Fuse's file info struct so we can get it in other file operations
+    fi->fh = fh;
+
+    MYFS_LOG_TRACE("End");
+
+    return 0;
+}
+
+static int
+myfs_flush(const char *path, struct fuse_file_info *fi) {
+    MYFS_LOG_TRACE("Begin; Path[%s]", path);
+    MYFS_LOG_TRACE("End");
+
+    return 0;
+}
+
 static int
 myfs_open(const char *path, struct fuse_file_info *fi) {
     myfs_file_t *file;
@@ -851,7 +1093,7 @@ myfs_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse
 
     //TODO: How to handle when there are multiple calls to read(). Do we need to look up the file each time or only once? Maybe using open()?
     //MariaDB SUBSTRING() indexes are 1 based.
-    res = db_selectf(&myfs->db, "SELECT SUBSTRING(`content`,%zu,%zu)\n"
+    res = db_selectf(&myfs->db, "SELECT SUBSTRING(`content`,%zd,%zu)\n"
                                 "FROM `files`\n"
                                 "WHERE `file_id`=%u",
                                 offset + 1, size,
@@ -900,9 +1142,15 @@ main(int argc, char **argv) {
         //operations.init = myfs_init;
         //operations.destroy = myfs_destroy;
         operations.getattr = myfs_getattr;
+        //setxattr
+        operations.truncate = myfs_truncate;
+        operations.utimens = myfs_utimens;
+        operations.chown = myfs_chown;
         operations.readdir = myfs_readdir;
         operations.unlink = myfs_unlink;
         operations.mkdir = myfs_mkdir;
+        operations.create = myfs_create;
+        operations.flush = myfs_flush;
         operations.open = myfs_open;
         operations.release = myfs_release;
         operations.read = myfs_read;

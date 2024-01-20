@@ -28,11 +28,11 @@ Everything needed to use MyFS is already in the repository (I think) but will ma
 - [x] Core code, configuration, integrating FUSE and MariaDB.
 - [ ] Implement all basic file system operations that FUSE supports.
   - [x]  Directory distings.
-  - [ ]  Create files.
+  - [x]  Create files.
   - [x]  Create directories.
   - [ ]  Create symbolic links.
-  - [ ]  Remove files.
-  - [x]  Remove directories.
+  - [x]  Remove files.
+  - [ ]  Remove directories.
   - [ ]  Remove symbolic links.
   - [x]  Read files.
   - [ ]  Write files.
@@ -40,8 +40,10 @@ Everything needed to use MyFS is already in the repository (I think) but will ma
   - [ ]  Move directories.
   - [ ]  Copy files.
   - [ ]  Copy directories.
+  - [x]  Truncate files..
   - [ ]  Other operations that I may or may not do.
 - [ ]  Advanced and configurable logging to syslog or other interfaces.
+- [ ]  Handle MariaDB query failures/retries. Block forever like NFS? This is important.
 - [ ]  Command line switch or application to setup the initial database.
 - [ ]  Finalize configuration file locations and how they're read.
 - [ ]  Create RPM and Deb packages.
