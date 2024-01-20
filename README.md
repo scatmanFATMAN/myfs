@@ -1,7 +1,7 @@
 # MyFS - A FUSE file system integrated with MariaDB.
 
 ## What is this?
-This implements the FUSE API to create a file system that manages its files in a MariaDB database. This is just a hobby project of mine because I was bored and wanted to learn something new, so I decided to learn FUSE. I didn't want to do something boring by simply creating files on the host file system again, so I thought creating them in a database might be kind of fun.
+MyFS is a user land file system written in C that implements the FUSE API to create a file system that manages its files in a MariaDB database. This is just a hobby project of mine because I was bored and wanted to learn something new, so I decided to learn FUSE. I didn't want to do something boring by simply creating files on the host file system again, so I thought creating them in a database might be kind of fun.
 
 
 ## How does it work?
@@ -12,9 +12,11 @@ MyFS gets mounted to a mount point like any other file system would. Once mounte
 
 This can almost be thought of as an NFS file system, where multiple clients can mount to a centralized location - except using a MariaDB database on the back end to present the file system.
 
+MyFS currently only works on Linux and runs as whatever user/group started the file system. Files inherit MyFS's user/group with 0600 permissions while directories also inherit MyFS's user/group but with 0700 permissions.
+
 ## How to use it
 TODO!
-Everything needed to use it is already there but I expect it to mature as some point and become easier.
+Everything needed to use MyFS is already in the repository (I think) but will mature and become easier to install. For now, see below:
 + The config file in ```etc/myfs.d/myfs.conf``` from this repository goes into ```/etc/myfs.d/myfs.conf``` on the file system.
 + Create the MariaDB database using the SQL file in ```etc/create.sql``` from this repositoy (don't forget to edit the file and set a password).
 + Update the config in ```/etc/myfs.d/myfs.conf``` with the proper MariaDB configurations.
@@ -43,16 +45,25 @@ Everything needed to use it is already there but I expect it to mature as some p
 - [ ]  Command line switch or application to setup the initial database.
 - [ ]  Finalize configuration file locations and how they're read.
 - [ ]  Create RPM and Deb packages.
+- [ ]  Support and test more configuration.
+
+## Support
++ FUSE
+  - [x] Version 3
++ Database
+  - [x] MariaDB 10.3.x
++ Operating System
+  - [x] Ubuntu 20.04.6
 
 ## FAQ
 + **What does MyFS stand for?**\
 Since MyFS uses MariaDB as its database, it uses the same naming convention that Mari... Oh wait, that doesn't make sense. It uses the same naming convention that MySQL uses, which MariaDB is forked from.
 
 + **Can I use MySQL?**\
-Probably. I don't expect to use any MariaDB only features so I'd be willing to bet it'd work just fine.
+Most likely. I don't expect to use any MariaDB only features so I'll be willing to bet that it works just fine.
 
 + **Can I use PostgreSQL?**\
-Not currently, but that'd be pretty cool down the line. I guess I'd need to think of a new project name.
+Not currently, but that'd be pretty cool down the line. If so, I suppose I'll need to think of a new project name (MyPostFS? MyFSPost? FSDB?). 
 
 + **Can I use Oracle?**\
 No.
