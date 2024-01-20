@@ -384,7 +384,7 @@ myfs_disconnect(myfs_t *myfs) {
  * @param[in] myfs The MyFS context.
  * @param[in] name The name of the file.
  * @param[in] type The file type.
- * @param[in] parent_id The file ID of the parent the file should be created in.
+ * @param[in] parent_id The File ID of the parent the file should be created in.
  * @return `true` if the file was created, otherwise `false`.
  */
 static bool
@@ -401,7 +401,32 @@ myfs_file_create(myfs_t *myfs, const char *name, myfs_file_type_t type, unsigned
     free(name_esc);
 
     if (!success) {
-        log_err(MODULE, "Error creating file '%s': %s", name, db_error(&myfs->db));
+        log_err(MODULE, "Error creating file '%s' with Parent ID %u: %s", name, parent_id, db_error(&myfs->db));
+    }
+
+    return success;
+}
+
+/**
+ * Deletes a file from MariaDB. If this file is a parent to other files, all children will
+ * be deleted in a cascading fashion.
+ *
+ * @param[in] myfs The MyFS context.
+ * @param[in] file_id The File ID of the file to delete.
+ * @return `true` if the file was deleted, otherwise `false`.
+ */
+static bool
+myfs_file_delete(myfs_t *myfs, unsigned int file_id) {
+    bool success;
+
+    //TODO: Support soft delete?
+
+    success = db_queryf(&myfs->db, "DELETE FROM `files`\n"
+                                   "WHERE `file_id`=%u",
+                                   file_id);
+
+    if (!success) {
+        log_err(MODULE, "Error deleting File ID %u: %s", file_id, db_error(&myfs->db));
     }
 
     return success;
@@ -679,6 +704,36 @@ myfs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offse
 }
 
 static int
+myfs_unlink(const char *path) {
+    myfs_file_t *file;
+    myfs_t *myfs;
+    bool success;
+
+    MYFS_LOG_TRACE("Begin; Path[%s]", path);
+
+    myfs = (myfs_t *)fuse_get_context()->private_data;
+
+    file = myfs_file_get(myfs, path, true);
+    if (file == NULL) {
+        return -ENOENT;
+    }
+
+    //Delete the file from MariaDB.
+    //FUSE does the check already to see if the file being deleted is a regular file.
+    success = myfs_file_delete(myfs, file->file_id);
+    myfs_file_free(file);
+
+    if (!success) {
+        //Not really sure what to return here. If this doesn't succeed, it means the MariaDB query failed.
+        return -EINVAL;
+    }
+
+    MYFS_LOG_TRACE("End");
+
+    return 0;
+}
+
+static int
 myfs_mkdir(const char *path, mode_t mode) {
     char dir[MYFS_PATH_NAME_MAX_LEN + 1];
     char name[MYFS_FILE_NAME_MAX_LEN + 1];
@@ -846,6 +901,7 @@ main(int argc, char **argv) {
         //operations.destroy = myfs_destroy;
         operations.getattr = myfs_getattr;
         operations.readdir = myfs_readdir;
+        operations.unlink = myfs_unlink;
         operations.mkdir = myfs_mkdir;
         operations.open = myfs_open;
         operations.release = myfs_release;
