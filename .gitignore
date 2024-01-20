@@ -2,4 +2,4 @@
 *.o
 
 #Ignore the binary itself
-src/myfs
+src/myfs/myfs

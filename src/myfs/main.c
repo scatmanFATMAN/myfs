@@ -10,8 +10,8 @@
 #include <libgen.h>
 #define FUSE_USE_VERSION 30
 #include <fuse.h>
-#include "log.h"
-#include "db.h"
+#include "../common/log.h"
+#include "../common/db.h"
 
 #define MODULE "Main"
 

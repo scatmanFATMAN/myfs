@@ -1,6 +1,9 @@
 app=myfs
 
-obj=db.o log.o main.o
+common=../common
+obj=$(common)/db.o \
+	$(common)/log.o \
+	main.o
 
 cc=gcc
 cflags=`mariadb_config --cflags` `pkg-config fuse3 --cflags` -D_GNU_SOURCE -Wall -g
@@ -26,4 +29,4 @@ update: release
 install: release
 	mv $(app) /usr/local/bin
 	mkdir -p /etc/myfs.d
-	cp ../etc/myfs.d/myfs.conf /etc/myfs.d
+	cp ../../etc/myfs.d/myfs.conf /etc/myfs.d

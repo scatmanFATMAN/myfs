@@ -40,7 +40,7 @@ Everything needed to use MyFS is already in the repository (I think) but will ma
   - [ ]  Move directories.
   - [ ]  Copy files.
   - [ ]  Copy directories.
-  - [x]  Truncate files..
+  - [x]  Truncate files.
   - [ ]  Other operations that I may or may not do.
 - [ ]  Advanced and configurable logging to syslog or other interfaces.
 - [ ]  Handle MariaDB query failures/retries. Block forever like NFS? This is important.
@@ -62,7 +62,7 @@ Everything needed to use MyFS is already in the repository (I think) but will ma
 Since MyFS uses MariaDB as its database, it uses the same naming convention that Mari... Oh wait, that doesn't make sense. It uses the same naming convention that MySQL uses, which MariaDB is forked from.
 
 + **Can I use MySQL?**\
-Most likely. I don't expect to use any MariaDB only features so I'll be willing to bet that it works just fine.
+Most likely. I don't expect to use any MariaDB specific features so I'll be willing to bet that it works just fine.
 
 + **Can I use PostgreSQL?**\
 Not currently, but that'd be pretty cool down the line. If so, I suppose I'll need to think of a new project name (MyPostFS? MyFSPost? FSDB?). 
