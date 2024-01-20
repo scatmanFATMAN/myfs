@@ -1,6 +1,6 @@
 app=myfs
 
-obj=db.o main.o
+obj=db.o log.o main.o
 
 cc=gcc
 cflags=`mariadb_config --cflags` `pkg-config fuse3 --cflags` -D_GNU_SOURCE -Wall -g

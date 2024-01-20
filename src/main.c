@@ -7,9 +7,13 @@
 #include <errno.h>
 #include <unistd.h>
 #include <ctype.h>
+#include <libgen.h>
 #define FUSE_USE_VERSION 30
 #include <fuse.h>
+#include "log.h"
 #include "db.h"
+
+#define MODULE "Main"
 
 //The maximum number of open files.
 #define MYFS_FILES_OPEN_MAX 128
@@ -223,7 +227,7 @@ myfs_config_read(const char *path, myfs_t *myfs) {
 
     f = fopen(path, "r");
     if (f == NULL) {
-        fprintf(stderr, "Error reading '%s': %s\n", path, strerror(errno));
+        log_err(MODULE, "Error reading '%s': %s", path, strerror(errno));
         return false;
     }
 
@@ -270,7 +274,7 @@ myfs_config_read(const char *path, myfs_t *myfs) {
                     strlcpy(myfs->config.mount, value, sizeof(myfs->config.mount));
                 }
                 else {
-                    fprintf(stderr, "Error parsing '%s': Unknown key '%s'\n", path, key);
+                    log_err(MODULE, "Error parsing '%s': Unknown key '%s'", path, key);
                     success = false;
                 }
             }
@@ -294,7 +298,7 @@ myfs_connect(myfs_t *myfs) {
     success = db_connect(&myfs->db, myfs->config.mariadb_host, myfs->config.mariadb_user, myfs->config.mariadb_password, myfs->config.mariadb_database, myfs->config.mariadb_port);
 
     if (!success) {
-        fprintf(stderr, "Error connecting to MariaDB: %s\n", db_error(&myfs->db));
+        log_err(MODULE, "Error connecting to MariaDB: %s", db_error(&myfs->db));
     }
 
     return success;
@@ -314,6 +318,34 @@ myfs_disconnect(myfs_t *myfs) {
     db_disconnect(&myfs->db);
 }
 
+/**
+ * Inserts a new file record into MariaDB with the given file type and parent.
+ *
+ * @param[in] myfs The MyFS context.
+ * @param[in] name The name of the file.
+ * @param[in] type The file type.
+ * @param[in] parent_id The file ID of the parent the file should be created in.
+ * @return `true` if the file was created, otherwise `false`.
+ */
+static bool
+myfs_file_create(myfs_t *myfs, const char *name, myfs_file_type_t type, unsigned int parent_id) {
+    char *name_esc;
+    bool success;
+
+    name_esc = db_escape(&myfs->db, name);
+
+    success = db_queryf(&myfs->db, "INSERT INTO `files` (`parent_id`,`name`,`type`,`created_on`,`last_accessed_on`,`last_modified_on`,`last_status_changed_on`)\n"
+                                   "VALUES (%u,'%s',%u,UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP())",
+                                   parent_id, name_esc, type);
+
+    free(name_esc);
+
+    if (!success) {
+        log_err(MODULE, "Error creating file '%s': %s", name, db_error(&myfs->db));
+    }
+
+    return success;
+}
 
 static myfs_file_t * myfs_file_query(myfs_t *myfs, unsigned int file_id, bool include_children);
 
@@ -332,7 +364,7 @@ myfs_file_query_children(myfs_t *myfs, myfs_file_t *file) {
     MYFS_LOG_TRACE("Begin; FileID[%u]; Name[%s]", file->file_id, file->name);
 
     if (file->type != MYFS_FILE_TYPE_DIRECTORY) {
-        fprintf(stderr, "Error getting children for file '%s': Not a directory", file->name);
+        log_err(MODULE, "Error getting children for file '%s': Not a directory", file->name);
         return;
     }
 
@@ -380,13 +412,13 @@ myfs_file_query(myfs_t *myfs, unsigned int file_id, bool include_children) {
                                 file_id);
 
     if (res == NULL) {
-        fprintf(stderr, "Error getting file with File ID %u: %s\n", file_id, db_error(&myfs->db));
+        log_err(MODULE, "Error getting file with File ID %u: %s", file_id, db_error(&myfs->db));
         return NULL;
     }
 
     row = mysql_fetch_row(res);
     if (row == NULL) {
-        fprintf(stderr, "Error getting file with File ID %u: Not found\n", file_id);
+        log_err(MODULE, "Error getting file with File ID %u: Not found", file_id);
     }
     else {
         file = malloc(sizeof(*file));
@@ -448,25 +480,35 @@ myfs_file_query_name(myfs_t *myfs, const char *name, unsigned int parent_id, boo
     myfs_file_t *file = NULL;
     MYSQL_RES *res;
     MYSQL_ROW row;
+    char *name_esc = NULL;
 
     MYFS_LOG_TRACE("Begin; Name[%s]; ParentID[%u]; IncludeChildren[%s]", name, parent_id, include_children ? "Yes" : "No");
+
+    //Escape the name if needed.
+    if (name != NULL && name[0] != '\0') {
+        name_esc = db_escape(&myfs->db, name);
+    }
 
     res = db_selectf(&myfs->db, "SELECT `file_id`\n"
                                 "FROM `files`\n"
                                 "WHERE `parent_id`=%u\n"
                                 "AND `name`='%s'",
                                 parent_id,
-                                name == NULL ? "" : name);
+                                name_esc == NULL ? "" : name_esc);
+
+    if (name_esc != NULL) {
+        free(name_esc);
+    }
+
     if (res == NULL) {
-        fprintf(stderr, "Error getting file '%s' with parent id %u: %s\n", name, parent_id, db_error(&myfs->db));
+        log_err(MODULE, "Error getting file '%s' with parent id %u: %s", name, parent_id, db_error(&myfs->db));
         return NULL;
     }
 
     row = mysql_fetch_row(res);
-    if (row == NULL) {
-        fprintf(stderr, "Error getting file '%s' with parent id %u: Not found\n", name, parent_id);
-    }
-    else {
+
+    //Don't output an error if the file doesn't exist. FUSE will try to stat() files to see if they exist before making other calls.
+    if (row != NULL) {
         file = myfs_file_query(myfs, strtoul(row[0], NULL, 10), include_children);
     }
 
@@ -577,6 +619,49 @@ myfs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offse
 }
 
 static int
+myfs_mkdir(const char *path, mode_t mode) {
+    char *path_dupe, *dir, *name;
+    bool success;
+    myfs_file_t *parent;
+    myfs_t *myfs;
+
+    MYFS_LOG_TRACE("Begin; Path[%s]", path);
+
+    myfs = (myfs_t *)fuse_get_context()->private_data;
+
+    //Get the directory(parent) to create the folder in:  /myfs/path/newfolder should be /myfs/path
+    path_dupe = strdup(path);
+    dir = dirname(path_dupe);
+    
+    parent = myfs_file_get(myfs, dir, false);
+    free(path_dupe);
+
+    if (parent == NULL) {
+        return -ENOENT;
+    }
+
+    //Now get the directory name to create: /myfs/path/newfolder should be newfolder
+    path_dupe = strdup(path);
+    name = basename(path_dupe);
+
+    MYFS_LOG_TRACE("Creating folder '%s' in '%s'", name, parent->name);
+
+    //Create the file in MySQL.
+    success = myfs_file_create(myfs, name, MYFS_FILE_TYPE_DIRECTORY, parent->file_id);
+
+    free(path_dupe);
+
+    if (!success) {
+        //Not really sure what to return here. If this doesn't succeed, it means the MariaDB query failed.
+        return -EINVAL;
+    }
+
+    MYFS_LOG_TRACE("End");
+
+    return 0;
+}
+
+static int
 myfs_open(const char *path, struct fuse_file_info *fi) {
     myfs_file_t *file;
     myfs_t *myfs;
@@ -594,7 +679,7 @@ myfs_open(const char *path, struct fuse_file_info *fi) {
     }
 
     if (fh == MYFS_FILES_OPEN_MAX) {
-        fprintf(stderr, "Error opening file '%s': Maximum number of files are open\n", path);
+        log_err(MODULE, "Error opening file '%s': Maximum number of files are open", path);
         return -EMFILE;
     }
 
@@ -663,7 +748,7 @@ myfs_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse
                                 file->file_id);
 
     if (res == NULL) {
-        fprintf(stderr, "Error reading file '%s': %s\n", file->name, db_error(&myfs->db));
+        log_err(MODULE, "Error reading file '%s': %s", file->name, db_error(&myfs->db));
         myfs_file_free(file);
         return -ENOENT;
     }
@@ -685,6 +770,7 @@ main(int argc, char **argv) {
     int ret = 0;
     myfs_t myfs;
 
+    log_init();
     mysql_library_init(0, NULL, NULL);
 
     memset(&myfs, 0, sizeof(myfs));
@@ -705,6 +791,7 @@ main(int argc, char **argv) {
         //operations.destroy = myfs_destroy;
         operations.getattr = myfs_getattr;
         operations.readdir = myfs_readdir;
+        operations.mkdir = myfs_mkdir;
         operations.open = myfs_open;
         operations.release = myfs_release;
         operations.read = myfs_read;
@@ -716,6 +803,7 @@ done:
     myfs_disconnect(&myfs);
 
     mysql_library_end();
+    log_free();
 
     return ret;
 }

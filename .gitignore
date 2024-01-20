@@ -1,0 +1,5 @@
+#Ignore all build files
+*.o
+
+#Ignore the binary itself
+src/myfs

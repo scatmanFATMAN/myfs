@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <string.h>
 #include "db.h"
 
 bool
@@ -96,4 +97,19 @@ db_selectf(db_t *db, const char *fmt, ...) {
     free(query);
 
     return res;
+}
+
+char *
+db_escape(db_t *db, const char *str) {
+    char *escaped;
+    size_t len;
+
+    len = strlen(str);
+
+    //mysql_real_escape_string() requires the new buffer to be (len * 2 + 1) size
+    escaped = malloc(len * 2 + 1);
+
+    mysql_real_escape_string(&db->mysql, escaped, str, len);
+
+    return escaped;
 }
