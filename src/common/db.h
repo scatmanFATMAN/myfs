@@ -89,6 +89,7 @@ MYSQL_RES * db_selectf(db_t *db, const char *fmt, ...);
  *
  * @param[in] db The database context.
  * @param[in] str The string to escape.
+ * @param[out] length The length of the escaped string. If NULL, this will be ignored.
  * @return The escaped string.
  */
-char * db_escape(db_t *db, const char *str);
+char * db_escape(db_t *db, const char *str, unsigned int *length);

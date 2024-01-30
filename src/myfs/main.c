@@ -243,7 +243,7 @@ myfs_file_create(myfs_t *myfs, const char *name, myfs_file_type_t type, unsigned
     char *name_esc, content[8];
     bool success;
 
-    name_esc = db_escape(&myfs->db, name);
+    name_esc = db_escape(&myfs->db, name, NULL);
 
     //Files get a blank string while directories and other file types get NULL
     if (type == MYFS_FILE_TYPE_FILE) {
@@ -526,7 +526,7 @@ myfs_file_query_name(myfs_t *myfs, const char *name, unsigned int parent_id, boo
 
     //Escape the name if needed.
     if (name != NULL && name[0] != '\0') {
-        name_esc = db_escape(&myfs->db, name);
+        name_esc = db_escape(&myfs->db, name, NULL);
     }
 
     res = db_selectf(&myfs->db, "SELECT `file_id`\n"
@@ -902,8 +902,9 @@ myfs_open(const char *path, struct fuse_file_info *fi) {
     myfs_file_t *file;
     myfs_t *myfs;
     uint64_t fh = 0;
+    bool success;
 
-    MYFS_LOG_TRACE("Begin; Path[%s]", path);
+    MYFS_LOG_TRACE("Begin; Path[%s]; Truncate[%s]", path, fi->flags & O_TRUNC ? "Yes" : "No");
 
     myfs = (myfs_t *)fuse_get_context()->private_data;
 
@@ -924,6 +925,17 @@ myfs_open(const char *path, struct fuse_file_info *fi) {
     file = myfs_file_get(myfs, path, false);
     if (file == NULL) {
         return -ENOENT;
+    }
+
+    //If the file was opened with O_TUNC, truncate it now.
+    if (fi->flags & O_TRUNC) {
+        success = myfs_file_set_content_size(myfs, file->file_id, 0);
+        if (!success) {
+            myfs_file_free(file);
+            return -ENOENT;
+        }
+
+        file->st.st_size = 0;
     }
 
     //Put the file into the open files table
@@ -985,7 +997,6 @@ myfs_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse
 
     if (res == NULL) {
         log_err(MODULE, "Error reading file '%s': %s", file->name, db_error(&myfs->db));
-        myfs_file_free(file);
         return -ENOENT;
     }
 
@@ -994,6 +1005,56 @@ myfs_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse
     memcpy(buffer, row[0], size);
 
     mysql_free_result(res);
+
+    MYFS_LOG_TRACE("End");
+
+    return size;
+}
+
+static int
+myfs_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
+    myfs_file_t *file;
+    myfs_t *myfs;
+    unsigned int buffer_esc_len;
+    char *buffer_esc;
+    bool success;
+
+    MYFS_LOG_TRACE("Begin; Path[%s]; Size[%zu]; Offset[%zu]; FileHandle[%zu]; Append[%s]", path, size, offset, fi->fh, fi->flags & O_APPEND ? "Yes" : "No");
+
+    myfs = (myfs_t *)fuse_get_context()->private_data;
+
+    //Get the file from the open file table
+    file = myfs->files[fi->fh];
+
+    //Escape the buffer for MySQL.
+    buffer_esc = db_escape(&myfs->db, buffer, &buffer_esc_len);
+
+    //Update the file's content
+    if (fi->flags & O_APPEND || file->st.st_size == offset) {
+        //When O_APPEND is given or , file content is always written to the end, no matter what the offset is.
+        //I don't actually think O_APPEND needs to be checked anymore. It appears FUSE will position the offset at the end
+        //of the file.
+        //So we need to see if the offset given by FUSE is the size of the file, if so then use MariaDB's CONCAT
+        success = db_queryf(&myfs->db, "UPDATE `files`\n"
+                                       "SET `content`=CONCAT(`content`,'%s')\n"
+                                       "WHERE `file_id`=%u",
+                                       buffer_esc,
+                                       file->file_id);
+    }
+    else {
+        success = db_queryf(&myfs->db, "UPDATE `files`\n"
+                                       "SET `content`=INSERT(`content`,%zd,%zu,'%s')\n"
+                                       "WHERE `file_id`=%u",
+                                       offset + 1, buffer_esc_len, buffer_esc,
+                                       file->file_id);
+    }
+
+    free(buffer_esc);
+
+    if (!success) {
+        log_err(MODULE, "Error writing to file '%s': %s", file->name, db_error(&myfs->db));
+        return -ENOENT;
+    }
 
     MYFS_LOG_TRACE("End");
 
@@ -1054,6 +1115,7 @@ main(int argc, char **argv) {
         operations.open = myfs_open;
         operations.release = myfs_release;
         operations.read = myfs_read;
+        operations.write = myfs_write;
 
         ret = fuse_main(argc, argv, &operations, &myfs);
     }

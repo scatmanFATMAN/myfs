@@ -104,8 +104,9 @@ db_selectf(db_t *db, const char *fmt, ...) {
 }
 
 char *
-db_escape(db_t *db, const char *str) {
+db_escape(db_t *db, const char *str, unsigned int *length) {
     char *escaped;
+    unsigned long escaped_len;
     size_t len;
 
     len = strlen(str);
@@ -113,7 +114,11 @@ db_escape(db_t *db, const char *str) {
     //mysql_real_escape_string() requires the new buffer to be (len * 2 + 1) size
     escaped = malloc(len * 2 + 1);
 
-    mysql_real_escape_string(&db->mysql, escaped, str, len);
+    escaped_len = mysql_real_escape_string(&db->mysql, escaped, str, len);
+
+    if (length != NULL) {
+        *length = escaped_len;
+    }
 
     return escaped;
 }

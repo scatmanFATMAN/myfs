@@ -32,10 +32,10 @@ Everything needed to use MyFS is already in the repository (I think) but will ma
   - [x]  Create directories.
   - [ ]  Create symbolic links.
   - [x]  Remove files.
-  - [ ]  Remove directories.
+  - [x]  Remove directories.
   - [ ]  Remove symbolic links.
   - [x]  Read files.
-  - [ ]  Write files.
+  - [x]  Write files.
   - [ ]  Move files.
   - [ ]  Move directories.
   - [ ]  Copy files.
