@@ -2,16 +2,17 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include <string.h>
 #include <time.h>
 #include <errno.h>
 #include <unistd.h>
-#include <ctype.h>
 #include <libgen.h>
 #define FUSE_USE_VERSION 30
 #include <fuse.h>
 #include "../common/log.h"
+#include "../common/config.h"
+#include "../common/string.h"
 #include "../common/db.h"
+#include "version.h"
 
 #define MODULE "Main"
 
@@ -36,18 +37,6 @@
 #else
 # define MYFS_LOG_TRACE(fmt, ...)
 #endif
-
-/**
- *  The configuration values for MyFS.
- */
-typedef struct {
-    char mariadb_host[128];         //!< The MariaDB host to connect to.
-    char mariadb_user[32];          //!< The MariaDB user.
-    char mariadb_password[64];      //!< The MariaDB user's password.
-    char mariadb_database[64];      //!< The MariaDB database to use.
-    unsigned int mariadb_port;      //!< The MariaDB port to connect to.
-    char mount[256];                //!< The mount point on the file system to mount on.
-} myfs_config_t;
 
 /**
  *  The possible types for files.
@@ -77,74 +66,9 @@ struct myfs_file_t {
  * The MyFS context that will be available in FUSE callbacks.
  */
 typedef struct {
-    myfs_config_t config;
     db_t db;
     myfs_file_t *files[MYFS_FILES_OPEN_MAX];
 } myfs_t;
-
-/**
- * Safely copy and NULL terminate a string.
- *
- * @param[in] dst The buffer to copy the string to.
- * @param[in] src The string to copy.
- * @param[in] size The size of the buffer pointed to by `dst`.
- * @return The number of characters copied, not including the NULL character.
- */
-static size_t
-strlcpy(char *dst, const char *src, size_t size) {
-    char *d = dst;
-    const char *s = src;
-    size_t n = size;
-
-    if (n != 0) {
-        while (--n != 0) {
-            if ((*d++ = *s++) == '\0') {
-                break;
-            }
-        }
-    }
-
-    if (n == 0) {
-        if (size != 0) {
-            *d = '\0';
-        }
-        while (*s++);
-    }
-
-    return s - src - 1;
-}
-
-/**
- * Left and right trim a string in place. Left trimming is done by shifting characters left using
- * memove(). Therefore, the caller does not need to worry about saving the original address of `str` if
- * the memory is to be free()'d.
- *
- * @param[in] str The string to left and right trim.
- * @return The same pointer as `str`.
- */
-char *
-myfs_trim(char *str) {
-    char *ptr;
-
-    //Left trim.
-    ptr = str;
-    while (isspace(*ptr)) {
-        ptr++;
-    }
-    //If we had to left trim, move the new start to the beginning of 'str', including the NULL terminator.
-    if (str != ptr) {
-        memmove(str, ptr, strlen(ptr) + 1);
-    }
-
-    //Right trim.
-    ptr = str + strlen(str) - 1;
-    while (ptr > str && isspace(*ptr)) {
-        *ptr = '\0';
-        ptr--;
-    }
-
-    return str;
-}
 
 /**
  * Parses a path into its directory component and copies it into a buffer.
@@ -198,6 +122,11 @@ myfs_basename(const char *path, char *dst, size_t size) {
     free(path_dupe);
 
     return dst;
+}
+
+static void
+config_error(const char *message) {
+    log_err(MODULE, "%s", message);
 }
 
 /**
@@ -272,80 +201,6 @@ myfs_file_free(myfs_file_t *file) {
 }
 
 /**
- * Read the configuration file for MyFS. This function fails if it encounters any invalid
- * keys or values but will parse the entire file to find all errors.
- *
- * @param[in] path The file to the configuration file.
- * @param[out] myfs The MyFS context where the configuration variables live.
- * @return `true` if the configuration file was valid, otherwise `false`.
- */
-static bool
-myfs_config_read(const char *path, myfs_t *myfs) {
-    char line[512], *key, *value, *save;
-    bool success = true;
-    FILE *f;
-
-    f = fopen(path, "r");
-    if (f == NULL) {
-        log_err(MODULE, "Error reading '%s': %s", path, strerror(errno));
-        return false;
-    }
-
-    //Read each line. Each line's key and value are separated by an '=' sign. Leading and Trailing whitespace is trimmed.
-    //The following are examples of valid lines:
-    //
-    //  key = value
-    //  key=value
-    //  key     =       value
-    while (fgets(line, sizeof(line), f) != NULL) {
-        myfs_trim(line);
-
-        //Any blank lines or lines that start with a '#' are ignored.
-        if (line[0] == '\0' || line[0] == '#') {
-            continue;
-        }
-
-        //The key is on the left of the '='.
-        key = strtok_r(line, "=", &save);
-        if (key != NULL) {
-            myfs_trim(key);
-
-            //The value is on the right of the '='.
-            value = strtok_r(NULL, "\n", &save);
-            if (value != NULL) {
-                myfs_trim(value);
-
-                if (strcmp(key, "mariadb_database") == 0) {
-                    strlcpy(myfs->config.mariadb_database, value, sizeof(myfs->config.mariadb_database));
-                }
-                else if (strcmp(key, "mariadb_host") == 0) {
-                    strlcpy(myfs->config.mariadb_host, value, sizeof(myfs->config.mariadb_host));
-                }
-                else if (strcmp(key, "mariadb_password") == 0) {
-                    strlcpy(myfs->config.mariadb_password, value, sizeof(myfs->config.mariadb_password));
-                }
-                else if (strcmp(key, "mariadb_port") == 0) {
-                    myfs->config.mariadb_port = strtoul(value, NULL, 10);
-                }
-                else if (strcmp(key, "mariadb_user") == 0) {
-                    strlcpy(myfs->config.mariadb_user, value, sizeof(myfs->config.mariadb_user));
-                }
-                else if (strcmp(key, "mount") == 0) {
-                    strlcpy(myfs->config.mount, value, sizeof(myfs->config.mount));
-                }
-                else {
-                    log_err(MODULE, "Error parsing '%s': Unknown key '%s'", path, key);
-                    success = false;
-                }
-            }
-        }
-    }
-
-    fclose(f);
-    return success;
-}
-
-/**
  * Connects MyFS to MariaDB.
  *
  * @param[in] myfs The MyFS context.
@@ -355,7 +210,7 @@ static bool
 myfs_connect(myfs_t *myfs) {
     bool success;
 
-    success = db_connect(&myfs->db, myfs->config.mariadb_host, myfs->config.mariadb_user, myfs->config.mariadb_password, myfs->config.mariadb_database, myfs->config.mariadb_port);
+    success = db_connect(&myfs->db, config_get("mariadb_host"), config_get("mariadb_user"), config_get("mariadb_password"), config_get("mariadb_database"),config_get_uint("mariadb_port"));
 
     if (!success) {
         log_err(MODULE, "Error connecting to MariaDB: %s", db_error(&myfs->db));
@@ -371,10 +226,6 @@ myfs_connect(myfs_t *myfs) {
  */
 static void
 myfs_disconnect(myfs_t *myfs) {
-    //Clear out the config which has the MariaDB password.
-    //TODO: memset() the MYSQL struct too? Is the password stored there?
-    //TODO: Do I actually need to lock the memory region too? (mlock or mprotect?)
-    memset(&myfs->config, 0, sizeof(myfs->config));
     db_disconnect(&myfs->db);
 }
 
@@ -734,7 +585,7 @@ myfs_file_get(myfs_t *myfs, const char *path, bool include_children) {
     //Loop through each name part and get the child until we get to the last one.
     name = strtok_r(path_dupe, "/", &save);
     while (name != NULL) {
-        parent_id = file->parent == NULL ? 0 : file->parent->file_id;
+        parent_id = file->file_id;
         myfs_file_free(file);
 
         file = myfs_file_query_name(myfs, name, parent_id, include_children);
@@ -899,6 +750,39 @@ myfs_unlink(const char *path) {
 
     MYFS_LOG_TRACE("End");
 
+    return 0;
+}
+
+static int
+myfs_rmdir(const char *path) {
+    myfs_file_t *file;
+    myfs_t *myfs;
+    bool success;
+
+    MYFS_LOG_TRACE("Begin; Path[%s]", path);
+
+    myfs = (myfs_t *)fuse_get_context()->private_data;
+
+    file = myfs_file_get(myfs, path, true);
+    if (file == NULL) {
+        return -ENOENT;
+    }
+
+    if (file->children_count > 0) {
+        //The directory is not empty. TODO: possibly allow recursive delete through configuration?
+        return -ENOTEMPTY;
+    }
+
+    //Delete the directory from MariaDB.
+    success = myfs_file_delete(myfs, file->file_id);
+    myfs_file_free(file);
+
+    if (!success) {
+        //Not really sure what to return here. If this doesn't succeed, it means the MariaDB query failed.
+        return -EINVAL;
+    }
+
+    MYFS_LOG_TRACE("End");
     return 0;
 }
 
@@ -1123,16 +1007,31 @@ main(int argc, char **argv) {
     myfs_t myfs;
 
     log_init();
+    config_init();
     mysql_library_init(0, NULL, NULL);
 
     memset(&myfs, 0, sizeof(myfs));
 
-    if (!myfs_config_read("/etc/myfs.d/myfs.conf", &myfs)) {
+    config_set_error_func(config_error);
+
+    //Set default config options.
+    config_set_default("mariadb_database", "--mariadb_database", "mariadb_database", "myfs",      "The MariaDB database name.");
+    config_set_default("mariadb_host",     "--mariadb_host",     "mariadb_host",     "127.0.0.1", "The MariaDB IP address or hostname.");
+    config_set_default("mariadb_password", "--mariadb_password", "mariadb_password", NULL,        "The MariaDB user's password.");
+    config_set_default("mariadb_port",     "--mariadb_port",     "mariadb_port",     "3306",      "The MariaDB port.");
+    config_set_default("mariadb_user",     "--mariadb_user",     "mariadb_user",     "myfs",      "The MariaDB user.");
+    config_set_default("mount",            "--mount",            "mount",            "/mnt/myfs", "The mount point for the file system.");
+
+    if (!config_read(argc, argv, "/etc/myfs.d/myfs.conf")) {
+        ret = 1;
         goto done;
     }
 
+    log_info(MODULE, "Starting v%d.%.d.%d", VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH);
+
     if (ret == 0) {
         if (!myfs_connect(&myfs)) {
+            ret = 2;
             goto done;
         }
     }
@@ -1148,6 +1047,7 @@ main(int argc, char **argv) {
         operations.chown = myfs_chown;
         operations.readdir = myfs_readdir;
         operations.unlink = myfs_unlink;
+        operations.rmdir = myfs_rmdir;
         operations.mkdir = myfs_mkdir;
         operations.create = myfs_create;
         operations.flush = myfs_flush;
@@ -1162,6 +1062,7 @@ done:
     myfs_disconnect(&myfs);
 
     mysql_library_end();
+    config_free();
     log_free();
 
     return ret;

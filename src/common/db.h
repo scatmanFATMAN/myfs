@@ -1,5 +1,11 @@
 #pragma once
 
+/**
+ * @file db.h
+ *
+ * A database module.
+ */
+
 #include <stdbool.h>
 #include <mariadb/mysql.h>
 

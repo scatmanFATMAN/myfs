@@ -1,5 +1,9 @@
-#Ignore all build files
+# Ignore all build files
 *.o
 
-#Ignore the binary itself
+# Ignore the binary itself
 src/myfs/myfs
+
+# Ignore doxygen build directories
+doc/html
+doc/latex

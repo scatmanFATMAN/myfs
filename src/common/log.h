@@ -1,6 +1,12 @@
 #pragma once
 
 /**
+ * @file log.h
+ *
+ * A logging module.
+ */
+
+/**
  * Convenience macros so the severity is chosen by the macro name.
  */
 #define log_err(module, fmt, ...)   log_write(module, LOG_SEVERITY_ERR, fmt, ##__VA_ARGS__)

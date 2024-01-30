@@ -1,8 +1,10 @@
 app=myfs
 
 common=../common
-obj=$(common)/db.o \
+obj=$(common)/config.o \
+	$(common)/db.o \
 	$(common)/log.o \
+	$(common)/string.o \
 	main.o
 
 cc=gcc
