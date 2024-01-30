@@ -318,6 +318,37 @@ myfs_file_update_times(myfs_t *myfs, unsigned int file_id, time_t last_accessed_
 }
 
 /**
+ * Updates both the parent and the name of a file (moves/renames it).
+ *
+ * @param[in] myfs The MyFS context.
+ * @param[in] file_id The File ID to rename.
+ * @param[in] parent_id The new Parent ID to set.
+ * @param[in] name The new name to set.
+ * @return `true` if the file was renamed, otherwise `false`.
+ */
+static bool
+myfs_file_rename(myfs_t *myfs, unsigned int file_id, unsigned int parent_id, const char *name) {
+    char *name_esc;
+    bool success;
+
+    name_esc = db_escape(&myfs->db, name, NULL);
+
+    success = db_queryf(&myfs->db, "UPDATE `files`\n"
+                                   "SET `parent_id`=%u,`name`='%s'\n"
+                                   "WHERE `file_id`=%u",
+                                   parent_id, name_esc,
+                                   file_id);
+
+    free(name_esc);
+
+    if (!success) {
+        log_err(MODULE, "Error updating Parent ID for File ID %u: %s", file_id, db_error(&myfs->db));
+    }
+
+    return success;
+}
+
+/**
  * Sets the size of the content. This is going to be interesting functionality in a database.
  *
  * @param[in] myfs The MyFS context.
@@ -932,7 +963,7 @@ myfs_open(const char *path, struct fuse_file_info *fi) {
         success = myfs_file_set_content_size(myfs, file->file_id, 0);
         if (!success) {
             myfs_file_free(file);
-            return -ENOENT;
+            return -EIO;
         }
 
         file->st.st_size = 0;
@@ -988,6 +1019,7 @@ myfs_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse
     }
 
     //TODO: How to handle when there are multiple calls to read(). Do we need to look up the file each time or only once? Maybe using open()?
+    //TODO: put queries in their own functions at the top with the others?
     //MariaDB SUBSTRING() indexes are 1 based.
     res = db_selectf(&myfs->db, "SELECT SUBSTRING(`content`,%zd,%zu)\n"
                                 "FROM `files`\n"
@@ -997,7 +1029,7 @@ myfs_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse
 
     if (res == NULL) {
         log_err(MODULE, "Error reading file '%s': %s", file->name, db_error(&myfs->db));
-        return -ENOENT;
+        return -EIO;
     }
 
     //Copy the MariaDB data into the output buffer
@@ -1030,6 +1062,7 @@ myfs_write(const char *path, const char *buffer, size_t size, off_t offset, stru
     buffer_esc = db_escape(&myfs->db, buffer, &buffer_esc_len);
 
     //Update the file's content
+    //TODO: put queries in their own functions at the top with the others?
     if (fi->flags & O_APPEND || file->st.st_size == offset) {
         //When O_APPEND is given or , file content is always written to the end, no matter what the offset is.
         //I don't actually think O_APPEND needs to be checked anymore. It appears FUSE will position the offset at the end
@@ -1053,12 +1086,61 @@ myfs_write(const char *path, const char *buffer, size_t size, off_t offset, stru
 
     if (!success) {
         log_err(MODULE, "Error writing to file '%s': %s", file->name, db_error(&myfs->db));
-        return -ENOENT;
+        return -EIO;
     }
 
     MYFS_LOG_TRACE("End");
 
     return size;
+}
+
+static int
+myfs_rename(const char *path_old, const char *path_new, unsigned int flags) {
+    char path_new_dir[MYFS_PATH_NAME_MAX_LEN + 1], name_new[MYFS_FILE_NAME_MAX_LEN + 1];
+    myfs_file_t *file, *dir;
+    myfs_t *myfs;
+    bool success;
+
+    MYFS_LOG_TRACE("Begin; OldPath[%s]; NewPath[%s]; Flags[%u]", path_old, path_new, flags);
+
+    myfs = (myfs_t *)fuse_get_context()->private_data;
+
+    //Get the directoy and name of the new path name.
+    myfs_dirname(path_new, path_new_dir, sizeof(path_new_dir));
+    myfs_basename(path_new, name_new, sizeof(name_new));
+
+    //Get the old file.
+    file = myfs_file_get(myfs, path_old, false);
+    if (file == NULL) {
+        return -ENOENT;
+    }
+
+    printf("  %d %d\n", RENAME_EXCHANGE, RENAME_NOREPLACE);
+    if (flags == RENAME_EXCHANGE) {
+        printf("EXCHANGE\n");
+    }
+    if (flags == RENAME_NOREPLACE) {
+        printf("NOREPLACE\n");
+    }
+
+    //Get the file for the directory.
+    dir = myfs_file_get(myfs, path_new_dir, false);
+    if (dir == NULL) {
+        myfs_file_free(file);
+        return -ENOENT;
+    }
+
+    success = myfs_file_rename(myfs, file->file_id, dir->file_id, name_new);
+    myfs_file_free(file);
+    myfs_file_free(dir);
+
+    if (!success) {
+        return -EIO;
+    }
+
+    MYFS_LOG_TRACE("End");
+
+    return 0;
 }
 
 int
@@ -1116,6 +1198,7 @@ main(int argc, char **argv) {
         operations.release = myfs_release;
         operations.read = myfs_read;
         operations.write = myfs_write;
+        operations.rename = myfs_rename;
 
         ret = fuse_main(argc, argv, &operations, &myfs);
     }

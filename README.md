@@ -36,10 +36,10 @@ Everything needed to use MyFS is already in the repository (I think) but will ma
   - [ ]  Remove symbolic links.
   - [x]  Read files.
   - [x]  Write files.
-  - [ ]  Move files.
-  - [ ]  Move directories.
-  - [ ]  Copy files.
-  - [ ]  Copy directories.
+  - [x]  Move files.
+  - [x]  Move directories.
+  - [x]  Copy files.
+  - [x]  Copy directories.
   - [x]  Truncate files.
   - [ ]  Other operations that I may or may not do.
 - [ ]  Advanced and configurable logging to syslog or other interfaces.
