@@ -235,7 +235,7 @@ myfs_disconnect(myfs_t *myfs) {
  * @return `true` if the file was created, otherwise `false`.
  */
 static bool
-myfs_file_create(myfs_t *myfs, const char *name, myfs_file_type_t type, unsigned int parent_id, const char *content) {
+myfs_db_file_create(myfs_t *myfs, const char *name, myfs_file_type_t type, unsigned int parent_id, const char *content) {
     char *name_esc, *content_esc;
     bool success;
 
@@ -272,7 +272,7 @@ myfs_file_create(myfs_t *myfs, const char *name, myfs_file_type_t type, unsigned
  * @return `true` if the file was deleted, otherwise `false`.
  */
 static bool
-myfs_file_delete(myfs_t *myfs, unsigned int file_id) {
+myfs_db_file_delete(myfs_t *myfs, unsigned int file_id) {
     bool success;
 
     //TODO: Support soft delete?
@@ -298,7 +298,7 @@ myfs_file_delete(myfs_t *myfs, unsigned int file_id) {
  * @return `true` if the file was updated, otherwise `false`.
  */
 static bool
-myfs_file_set_times(myfs_t *myfs, unsigned int file_id, time_t last_accessed_on, time_t last_modified_on) {
+myfs_db_file_set_times(myfs_t *myfs, unsigned int file_id, time_t last_accessed_on, time_t last_modified_on) {
     bool success;
 
     success = db_queryf(&myfs->db, "UPDATE `files`\n"
@@ -324,7 +324,7 @@ myfs_file_set_times(myfs_t *myfs, unsigned int file_id, time_t last_accessed_on,
  * @return `true` if the file was renamed, otherwise `false`.
  */
 static bool
-myfs_file_rename(myfs_t *myfs, unsigned int file_id, unsigned int parent_id, const char *name) {
+myfs_db_file_rename(myfs_t *myfs, unsigned int file_id, unsigned int parent_id, const char *name) {
     char *name_esc;
     bool success;
 
@@ -354,7 +354,7 @@ myfs_file_rename(myfs_t *myfs, unsigned int file_id, unsigned int parent_id, con
  * @return The file content which must be free()'d or `NULL` if an error occurred.
  */
 static char *
-myfs_file_get_content(myfs_t *myfs, unsigned int file_id, size_t *len) {
+myfs_db_file_get_content(myfs_t *myfs, unsigned int file_id, size_t *len) {
     MYSQL_RES *res;
     MYSQL_ROW row;
     char *content = NULL;
@@ -390,7 +390,7 @@ myfs_file_get_content(myfs_t *myfs, unsigned int file_id, size_t *len) {
  * @return `true` if the file was updated, otherwise `false`.
  */
 static bool
-myfs_file_set_content_size(myfs_t *myfs, unsigned int file_id, off_t size) {
+myfs_db_file_set_content_size(myfs_t *myfs, unsigned int file_id, off_t size) {
     MYSQL_RES *res;
     MYSQL_ROW row;
     off_t current_size = -1, diff;
@@ -451,7 +451,7 @@ myfs_file_set_content_size(myfs_t *myfs, unsigned int file_id, off_t size) {
     return true;
 }
 
-static myfs_file_t * myfs_file_query(myfs_t *myfs, unsigned int file_id, bool include_children);
+static myfs_file_t * myfs_db_file_query(myfs_t *myfs, unsigned int file_id, bool include_children);
 
 /**
  * Queries MariaDB for a MyFS's file's children. The file must be a MYFS_FILE_TYPE_DIRECTORY.
@@ -485,7 +485,7 @@ myfs_file_query_children(myfs_t *myfs, myfs_file_t *file) {
     MYFS_LOG_TRACE("Children[%u]", file->children_count);
 
     while ((row = mysql_fetch_row(res)) != NULL) {
-        file->children[i++] = myfs_file_query(myfs, strtoul(row[0], NULL, 10), false);
+        file->children[i++] = myfs_db_file_query(myfs, strtoul(row[0], NULL, 10), false);
     }
 
     mysql_free_result(res);
@@ -503,7 +503,7 @@ myfs_file_query_children(myfs_t *myfs, myfs_file_t *file) {
  * @return The MyFS file or `NULL` if an error occurred.
  */
 static myfs_file_t *
-myfs_file_query(myfs_t *myfs, unsigned int file_id, bool include_children) {
+myfs_db_file_query(myfs_t *myfs, unsigned int file_id, bool include_children) {
     myfs_file_t *file = NULL;
     MYSQL_RES *res;
     MYSQL_ROW row;
@@ -532,7 +532,7 @@ myfs_file_query(myfs_t *myfs, unsigned int file_id, bool include_children) {
         strlcpy(file->name, row[1], sizeof(file->name));
         if (file_id > 0) {
             //Only grab the parent if this file is not the root.
-            file->parent = myfs_file_query(myfs, strtoul(row[2], NULL, 10), false);
+            file->parent = myfs_db_file_query(myfs, strtoul(row[2], NULL, 10), false);
         }
         file->type = myfs_file_type(row[3]);
 
@@ -585,7 +585,7 @@ myfs_file_query(myfs_t *myfs, unsigned int file_id, bool include_children) {
  * @return The MyFS file or `NULL` if an error occurred.
  */
 static myfs_file_t *
-myfs_file_query_name(myfs_t *myfs, const char *name, unsigned int parent_id, bool include_children) {
+myfs_db_file_query_name(myfs_t *myfs, const char *name, unsigned int parent_id, bool include_children) {
     myfs_file_t *file = NULL;
     MYSQL_RES *res;
     MYSQL_ROW row;
@@ -618,7 +618,7 @@ myfs_file_query_name(myfs_t *myfs, const char *name, unsigned int parent_id, boo
 
     //Don't output an error if the file doesn't exist. FUSE will try to stat() files to see if they exist before making other calls.
     if (row != NULL) {
-        file = myfs_file_query(myfs, strtoul(row[0], NULL, 10), include_children);
+        file = myfs_db_file_query(myfs, strtoul(row[0], NULL, 10), include_children);
     }
 
     mysql_free_result(res);
@@ -626,6 +626,64 @@ myfs_file_query_name(myfs_t *myfs, const char *name, unsigned int parent_id, boo
     MYFS_LOG_TRACE("End");
 
     return file;
+}
+
+static bool
+myfs_db_get_num_files(myfs_t *myfs, uint64_t *count) {
+    MYSQL_RES *res;
+    MYSQL_ROW row;
+    bool success = false;
+
+    res = db_selectf(&myfs->db, "SELECT COUNT(*)\n"
+                                "FROM `files`");
+
+    if (res == NULL) {
+        log_err(MODULE, "Error getting number of files: %s", db_error(&myfs->db));
+        return false;
+    }
+
+    row = mysql_fetch_row(res);
+    if (row == NULL) {
+        log_err(MODULE, "Error getting number of files: Not data returned");
+    }
+    else {
+        *count = strtoul(row[0], NULL, 10);
+        success = true;
+    }
+
+    mysql_free_result(res);
+
+    return success;
+}
+
+static bool
+myfs_db_get_space_used(myfs_t *myfs, uint64_t *space) {
+    MYSQL_RES *res;
+    MYSQL_ROW row;
+    bool success = false;
+
+    res = db_selectf(&myfs->db, "SELECT `data_length`+`index_length`\n"
+                                "FROM `information_schema`.`tables`\n"
+                                "WHERE `table_schema`='%s'",
+                                config_get("mariadb_database"));
+
+    if (res == NULL) {
+        log_err(MODULE, "Error getting used space: %s", db_error(&myfs->db));
+        return false;
+    }
+
+    row = mysql_fetch_row(res);
+    if (row == NULL) {
+        log_err(MODULE, "Error getting used space: No data returned");
+    }
+    else {
+        *space = strtoul(row[0], NULL, 10);
+        success = true;
+    }
+
+    mysql_free_result(res);
+
+    return success;
 }
 
 /**
@@ -649,7 +707,7 @@ myfs_file_get(myfs_t *myfs, const char *path, bool include_children) {
     path_dupe = strdup(path + 1);
 
     //Get the root folder.
-    file = myfs_file_query_name(myfs, NULL, 0, include_children);
+    file = myfs_db_file_query_name(myfs, NULL, 0, include_children);
 
     //Loop through each name part and get the child until we get to the last one.
     name = strtok_r(path_dupe, "/", &save);
@@ -657,7 +715,7 @@ myfs_file_get(myfs_t *myfs, const char *path, bool include_children) {
         parent_id = file->file_id;
         myfs_file_free(file);
 
-        file = myfs_file_query_name(myfs, name, parent_id, include_children);
+        file = myfs_db_file_query_name(myfs, name, parent_id, include_children);
         name = strtok_r(NULL, "/", &save);
     }
 
@@ -701,7 +759,7 @@ myfs_open_helper(const char *path, bool dir, bool truncate, struct fuse_file_inf
 
     //If a file is being opened, truncate if asked.
     if (!dir && truncate) {
-        success = myfs_file_set_content_size(myfs, file->file_id, 0);
+        success = myfs_db_file_set_content_size(myfs, file->file_id, 0);
         if (!success) {
             myfs_file_free(file);
             return -EIO;
@@ -735,6 +793,32 @@ myfs_release_helper(const char *path, struct fuse_file_info *fi) {
 /******************************************************************************************************
  *                  FUSE CALLBACKS
  *****************************************************************************************************/
+
+static int
+myfs_statfs(const char *path, struct statvfs *stv) {
+    myfs_t *myfs;
+    bool success;
+
+    MYFS_LOG_TRACE("Begin; Path[%s]", path);
+
+    myfs = (myfs_t *)fuse_get_context()->private_data;
+
+    memset(stv, 0, sizeof(*stv));
+    stv->f_bsize = 1;
+    stv->f_frsize = 1;
+    stv->f_namemax = MYFS_FILE_NAME_MAX_LEN;
+
+    success = myfs_db_get_num_files(myfs, &stv->f_files) &&
+              myfs_db_get_space_used(myfs, &stv->f_blocks);
+
+    if (!success) {
+        return -EIO;
+    }
+
+    MYFS_LOG_TRACE("End");
+
+    return 0;
+}
 
 static int
 myfs_getattr(const char *path, struct stat *st, struct fuse_file_info *fi) {
@@ -795,7 +879,7 @@ myfs_truncate(const char *path, off_t size, struct fuse_file_info *fi) {
     //Get the file from the open file table
     file = myfs->files[fi->fh];
 
-    success = myfs_file_set_content_size(myfs, file->file_id, size);
+    success = myfs_db_file_set_content_size(myfs, file->file_id, size);
     if (!success) {
         return -EIO;
     }
@@ -824,7 +908,7 @@ myfs_utimens(const char *path, const struct timespec ts[2], struct fuse_file_inf
         //Get the file from the open file table
         file = myfs->files[fi->fh];
 
-        success = myfs_file_set_times(myfs, file->file_id, ts[0].tv_sec, ts[1].tv_sec);
+        success = myfs_db_file_set_times(myfs, file->file_id, ts[0].tv_sec, ts[1].tv_sec);
         if (!success) {
             return -EIO;
         }
@@ -924,7 +1008,7 @@ myfs_unlink(const char *path) {
 
     //Delete the file from MariaDB.
     //FUSE does the check already to see if the file being deleted is a regular file.
-    success = myfs_file_delete(myfs, file->file_id);
+    success = myfs_db_file_delete(myfs, file->file_id);
     myfs_file_free(file);
 
     if (!success) {
@@ -957,7 +1041,7 @@ myfs_rmdir(const char *path) {
     }
 
     //Delete the directory from MariaDB.
-    success = myfs_file_delete(myfs, file->file_id);
+    success = myfs_db_file_delete(myfs, file->file_id);
     myfs_file_free(file);
 
     if (!success) {
@@ -993,7 +1077,7 @@ myfs_mkdir(const char *path, mode_t mode) {
     }
 
     //Create the directory in MariaDB.
-    success = myfs_file_create(myfs, name, MYFS_FILE_TYPE_DIRECTORY, parent->file_id, NULL);
+    success = myfs_db_file_create(myfs, name, MYFS_FILE_TYPE_DIRECTORY, parent->file_id, NULL);
     myfs_file_free(parent);
 
     if (!success) {
@@ -1032,7 +1116,7 @@ myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
     }
 
     //Create the file in MariaDB.
-    success = myfs_file_create(myfs, name, MYFS_FILE_TYPE_FILE, parent->file_id, NULL);
+    success = myfs_db_file_create(myfs, name, MYFS_FILE_TYPE_FILE, parent->file_id, NULL);
     myfs_file_free(parent);
 
     if (!success) {
@@ -1236,7 +1320,7 @@ myfs_rename(const char *path_old, const char *path_new, unsigned int flags) {
         return -ENOENT;
     }
 
-    success = myfs_file_rename(myfs, file->file_id, dir->file_id, name_new);
+    success = myfs_db_file_rename(myfs, file->file_id, dir->file_id, name_new);
     myfs_file_free(file);
     myfs_file_free(dir);
 
@@ -1270,7 +1354,7 @@ myfs_symlink(const char *target, const char *path) {
         return -ENOENT;
     }
 
-    success = myfs_file_create(myfs, name, MYFS_FILE_TYPE_SOFT_LINK, parent->file_id, target);
+    success = myfs_db_file_create(myfs, name, MYFS_FILE_TYPE_SOFT_LINK, parent->file_id, target);
     myfs_file_free(parent);
 
     if (!success) {
@@ -1303,7 +1387,7 @@ myfs_readlink(const char *path, char *buf, size_t size) {
         return -EINVAL;
     }
 
-    content = myfs_file_get_content(myfs, file->file_id, &content_len);
+    content = myfs_db_file_get_content(myfs, file->file_id, &content_len);
     myfs_file_free(file);
 
     if (content == NULL) {
@@ -1365,6 +1449,7 @@ main(int argc, char **argv) {
         memset(&operations, 0, sizeof(operations));
         //operations.init = myfs_init;
         //operations.destroy = myfs_destroy;
+        operations.statfs = myfs_statfs;
         operations.getattr = myfs_getattr;
         operations.access = myfs_access;
         //setxattr
