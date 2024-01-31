@@ -677,7 +677,7 @@ myfs_getattr(const char *path, struct stat *st, struct fuse_file_info *fi) {
     myfs_file_t *file;
     myfs_t *myfs;
 
-    MYFS_LOG_TRACE("Begin; Path[%s]", path);
+    MYFS_LOG_TRACE("Begin; Path[%s]; FI[%p]", path, fi);
 
     myfs = (myfs_t *)fuse_get_context()->private_data;
 
@@ -696,12 +696,35 @@ myfs_getattr(const char *path, struct stat *st, struct fuse_file_info *fi) {
 }
 
 static int
+myfs_access(const char *path, int mode) {
+    myfs_file_t *file;
+    myfs_t *myfs;
+
+    MYFS_LOG_TRACE("Begin; Path[%s]; Mode[%d]", path, mode);
+
+    myfs = (myfs_t *)fuse_get_context()->private_data;
+
+    file = myfs_file_get(myfs, path, false);
+    if (file == NULL) {
+        return -ENOENT;
+    }
+
+    //TODO: Check permissions if we implement them.
+    myfs_file_free(file);
+
+    MYFS_LOG_TRACE("End");
+
+    return 0;
+
+}
+
+static int
 myfs_truncate(const char *path, off_t size, struct fuse_file_info *fi) {
     myfs_file_t *file;
     myfs_t *myfs;
     bool success;
 
-    MYFS_LOG_TRACE("Begin; Path[%s]; Size[%zu]", path, size);
+    MYFS_LOG_TRACE("Begin; Path[%s]; Size[%zu]; FI[%p]", path, size, fi);
 
     myfs = (myfs_t *)fuse_get_context()->private_data;
 
@@ -723,12 +746,13 @@ myfs_utimens(const char *path, const struct timespec ts[2], struct fuse_file_inf
     myfs_t *myfs;
     bool success;
 
-    MYFS_LOG_TRACE("Begin; Path[%s]; atime[%ld]; mtime[%ld]", path, ts[0].tv_sec, ts[1].tv_sec);
+    MYFS_LOG_TRACE("Begin; Path[%s]; atime[%ld]; mtime[%ld]; FI[%p]", path, ts[0].tv_sec, ts[1].tv_sec, fi);
 
     //TODO: file info always seems to be NULL? The file should be open though
 
     if (fi == NULL) {
-        MYFS_LOG_TRACE("FileInfo is NULL");
+        fprintf(stderr, "BLAH\n");
+        exit(1);
     }
     else {
         myfs = (myfs_t *)fuse_get_context()->private_data;
@@ -748,9 +772,18 @@ myfs_utimens(const char *path, const struct timespec ts[2], struct fuse_file_inf
 
 static int
 myfs_chown(const char *path, uid_t uid, gid_t gid, struct fuse_file_info *fi) {
-    MYFS_LOG_TRACE("Begin; Path[%s]", path);
+    MYFS_LOG_TRACE("Begin; Path[%s]; UID[%d]; GID[%d]; FI[%p]", path, uid, gid, fi);
 
     //This callback needs to be implemented for FUSE but MyFS doesn't need it since all user/groups are inherited by the user/group running the file system.
+
+    MYFS_LOG_TRACE("End");
+
+    return 0;
+}
+
+static int
+myfs_chmod(const char *path, mode_t mode, struct fuse_file_info *fi) {
+    MYFS_LOG_TRACE("Begin; Path[%s]; FI[%p]", path, fi);
 
     MYFS_LOG_TRACE("End");
 
@@ -763,7 +796,7 @@ myfs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offse
     myfs_t *myfs;
     unsigned int i;
 
-    MYFS_LOG_TRACE("Begin; Path[%s]; Offset[%zu]", path, offset);
+    MYFS_LOG_TRACE("Begin; Path[%s]; Offset[%zu]; FI[%p]", path, offset, fi);
 
     myfs = (myfs_t *)fuse_get_context()->private_data;
 
@@ -898,7 +931,7 @@ myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
     myfs_file_t *parent, *file;
     myfs_t *myfs;
 
-    MYFS_LOG_TRACE("Begin; Path[%s]", path);
+    MYFS_LOG_TRACE("Begin; Path[%s]; FI[%p]", path, fi);
 
     myfs = (myfs_t *)fuse_get_context()->private_data;
 
@@ -954,7 +987,7 @@ myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
 
 static int
 myfs_flush(const char *path, struct fuse_file_info *fi) {
-    MYFS_LOG_TRACE("Begin; Path[%s]", path);
+    MYFS_LOG_TRACE("Begin; Path[%s]; FI[%p]", path, fi);
     MYFS_LOG_TRACE("End");
 
     return 0;
@@ -967,7 +1000,7 @@ myfs_open(const char *path, struct fuse_file_info *fi) {
     uint64_t fh = 0;
     bool success;
 
-    MYFS_LOG_TRACE("Begin; Path[%s]; Truncate[%s]", path, fi->flags & O_TRUNC ? "Yes" : "No");
+    MYFS_LOG_TRACE("Begin; Path[%s]; Truncate[%s]; FI[%p]", path, fi->flags & O_TRUNC ? "Yes" : "No", fi);
 
     myfs = (myfs_t *)fuse_get_context()->private_data;
 
@@ -1016,7 +1049,7 @@ static int
 myfs_release(const char *path, struct fuse_file_info *fi) {
     myfs_t *myfs;
 
-    MYFS_LOG_TRACE("Begin; Path[%s]; FileHandle[%zu]", path, fi->fh);
+    MYFS_LOG_TRACE("Begin; Path[%s]; FileHandle[%zu]; FI[%p]", path, fi->fh, fi);
 
     myfs = (myfs_t *)fuse_get_context()->private_data;
 
@@ -1036,7 +1069,7 @@ myfs_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse
     myfs_file_t *file;
     myfs_t *myfs;
 
-    MYFS_LOG_TRACE("Begin; Path[%s]; Size[%zu]; Offset[%zu]; FileHandle[%zu]", path, size, offset, fi->fh);
+    MYFS_LOG_TRACE("Begin; Path[%s]; Size[%zu]; Offset[%zu]; FileHandle[%zu]; FI[%p]", path, size, offset, fi->fh, fi);
 
     myfs = (myfs_t *)fuse_get_context()->private_data;
 
@@ -1083,7 +1116,7 @@ myfs_write(const char *path, const char *buffer, size_t size, off_t offset, stru
     char *buffer_esc;
     bool success;
 
-    MYFS_LOG_TRACE("Begin; Path[%s]; Size[%zu]; Offset[%zu]; FileHandle[%zu]; Append[%s]", path, size, offset, fi->fh, fi->flags & O_APPEND ? "Yes" : "No");
+    MYFS_LOG_TRACE("Begin; Path[%s]; Size[%zu]; Offset[%zu]; FileHandle[%zu]; Append[%s]; FI[%p]", path, size, offset, fi->fh, fi->flags & O_APPEND ? "Yes" : "No", fi);
 
     myfs = (myfs_t *)fuse_get_context()->private_data;
 
@@ -1292,10 +1325,12 @@ main(int argc, char **argv) {
         //operations.init = myfs_init;
         //operations.destroy = myfs_destroy;
         operations.getattr = myfs_getattr;
+        operations.access = myfs_access;
         //setxattr
         operations.truncate = myfs_truncate;
         operations.utimens = myfs_utimens;
         operations.chown = myfs_chown;
+        operations.chmod = myfs_chmod;
         operations.readdir = myfs_readdir;
         operations.unlink = myfs_unlink;
         operations.rmdir = myfs_rmdir;
