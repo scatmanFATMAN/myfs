@@ -44,7 +44,8 @@
 typedef enum {
     MYFS_FILE_TYPE_INVALID,         //!< Default value and shouldn't be used except to check for error conditions.
     MYFS_FILE_TYPE_FILE,            //!< Regular file.
-    MYFS_FILE_TYPE_DIRECTORY        //!< Directory.
+    MYFS_FILE_TYPE_DIRECTORY,       //!< Directory.
+    MYFS_FILE_TYPE_SOFT_LINK        //!< Symbolic or Soft Link.
 } myfs_file_type_t;
 
 /**
@@ -145,6 +146,10 @@ myfs_file_type(const char *type) {
         return MYFS_FILE_TYPE_DIRECTORY;
     }
 
+    if (strcmp(type, "Soft Link") == 0) {
+        return MYFS_FILE_TYPE_SOFT_LINK;
+    }
+
     return MYFS_FILE_TYPE_INVALID;
 }
 
@@ -161,6 +166,8 @@ myfs_file_type_str(myfs_file_type_t type) {
             return "File";
         case MYFS_FILE_TYPE_DIRECTORY:
             return "Directory";
+        case MYFS_FILE_TYPE_SOFT_LINK:
+            return "Soft Link";
         case MYFS_FILE_TYPE_INVALID:
             break;
     }
@@ -236,28 +243,30 @@ myfs_disconnect(myfs_t *myfs) {
  * @param[in] name The name of the file.
  * @param[in] type The file type.
  * @param[in] parent_id The File ID of the parent the file should be created in.
+ * @param[in] content Any initial content for the file.
  * @return `true` if the file was created, otherwise `false`.
  */
 static bool
-myfs_file_create(myfs_t *myfs, const char *name, myfs_file_type_t type, unsigned int parent_id) {
-    char *name_esc, content[8];
+myfs_file_create(myfs_t *myfs, const char *name, myfs_file_type_t type, unsigned int parent_id, const char *content) {
+    char *name_esc, *content_esc;
     bool success;
 
     name_esc = db_escape(&myfs->db, name, NULL);
 
     //Files get a blank string while directories and other file types get NULL
-    if (type == MYFS_FILE_TYPE_FILE) {
-        strcpy(content, "''");
+    if (type == MYFS_FILE_TYPE_DIRECTORY || content == NULL) {
+        content_esc = strdup("");
     }
     else {
-        strcpy(content, "NULL");
+        content_esc = db_escape(&myfs->db, content, NULL);
     }
 
     success = db_queryf(&myfs->db, "INSERT INTO `files` (`parent_id`,`name`,`type`,`content`,`created_on`,`last_accessed_on`,`last_modified_on`,`last_status_changed_on`)\n"
-                                   "VALUES (%u,'%s',%u,%s,UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP())",
-                                   parent_id, name_esc, type, content);
+                                   "VALUES (%u,'%s',%u,'%s',UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP())",
+                                   parent_id, name_esc, type, content_esc);
 
     free(name_esc);
+    free(content_esc);
 
     if (!success) {
         log_err(MODULE, "Error creating file '%s' with Parent ID %u: %s", name, parent_id, db_error(&myfs->db));
@@ -349,6 +358,42 @@ myfs_file_rename(myfs_t *myfs, unsigned int file_id, unsigned int parent_id, con
 }
 
 /**
+ * Gets the file content and optionally its size.
+ *
+ * @param[in] myfs The MyFS context.
+ * @param[in] file_id The File ID to get content for.
+ * @param[out] len The length of `content`, or `NULL` to ignore.
+ * @return The file content which must be free()'d or `NULL` if an error occurred.
+ */
+static char *
+myfs_file_get_content(myfs_t *myfs, unsigned int file_id, size_t *len) {
+    MYSQL_RES *res;
+    MYSQL_ROW row;
+    char *content = NULL;
+
+    res = db_selectf(&myfs->db, "SELECT `content`,LENGTH(`content`)\n"
+                                "FROM `files`\n"
+                                "WHERE `file_id`=%u",
+                                file_id);
+
+    if (res == NULL) {
+        log_err(MODULE, "Error getting file content for File ID %u: %s", file_id, db_error(&myfs->db));
+        return NULL;
+    }
+
+    row = mysql_fetch_row(res);
+    if (row != NULL) {
+        content = strdup(row[0]);
+        if (len != NULL) {
+            *len = strtoul(row[1], NULL, 10);
+        }
+    }
+
+    mysql_free_result(res);
+    return content;
+}
+
+/**
  * Sets the size of the content. This is going to be interesting functionality in a database.
  *
  * @param[in] myfs The MyFS context.
@@ -364,7 +409,7 @@ myfs_file_set_content_size(myfs_t *myfs, unsigned int file_id, off_t size) {
     bool success;
 
     //First, get the current size of the content so we know if we need to shrink, grow, or do nothing.
-    res = db_selectf(&myfs->db, "SELECT IFNULL(LENGTH(`content`),0)\n"
+    res = db_selectf(&myfs->db, "SELECT LENGTH(`content`)\n"
                                 "FROM `files`\n"
                                 "WHERE `file_id`=%u",
                                 file_id);
@@ -392,7 +437,7 @@ myfs_file_set_content_size(myfs_t *myfs, unsigned int file_id, off_t size) {
     if (diff > 0) {
         //Simply add blanks onto the end
         success = db_queryf(&myfs->db, "UPDATE `files`\n"
-                                       "SET `content`=CONCAT(IFNULL(`content`,''),REPEAT(' ',%zd))\n"
+                                       "SET `content`=CONCAT(`content`,REPEAT(' ',%zd))\n"
                                        "WHERE `file_id`=%u",
                                        diff,
                                        file_id);
@@ -404,7 +449,7 @@ myfs_file_set_content_size(myfs_t *myfs, unsigned int file_id, off_t size) {
     }
     else if (diff < 0) {
         success = db_queryf(&myfs->db, "UPDATE `files`\n"
-                                       "SET `content`=SUBSTRING(IFNULL(`content`,''),0,%zd)\n"
+                                       "SET `content`=SUBSTRING(`content`,0,%zd)\n"
                                        "WHERE `file_id`=%u",
                                        size,
                                        file_id);
@@ -477,7 +522,7 @@ myfs_file_query(myfs_t *myfs, unsigned int file_id, bool include_children) {
 
     MYFS_LOG_TRACE("Begin; FileID[%u]; IncludeChildren[%s]", file_id, include_children ? "Yes" : "No");
 
-    res = db_selectf(&myfs->db, "SELECT `file_id`,`name`,`parent_id`,`type`,`last_accessed_on`,`last_modified_on`,`last_status_changed_on`,IFNULL(LENGTH(`content`),0)\n"
+    res = db_selectf(&myfs->db, "SELECT `file_id`,`name`,`parent_id`,`type`,`last_accessed_on`,`last_modified_on`,`last_status_changed_on`,LENGTH(`content`)\n"
                                 "FROM `files`\n"
                                 "WHERE `file_id`=%u",
                                 file_id);
@@ -513,6 +558,11 @@ myfs_file_query(myfs_t *myfs, unsigned int file_id, bool include_children) {
             case MYFS_FILE_TYPE_DIRECTORY:
                 file->st.st_mode = S_IFDIR | 0700;
                 file->st.st_nlink = 2;
+                break;
+            case MYFS_FILE_TYPE_SOFT_LINK:
+                file->st.st_mode = S_IFLNK | 0600;
+                file->st.st_nlink = 1;
+                file->st.st_size = strtoul(row[7], NULL, 10);
                 break;
             case MYFS_FILE_TYPE_INVALID:
                 break;
@@ -842,12 +892,11 @@ myfs_mkdir(const char *path, mode_t mode) {
     }
 
     //Create the directory in MariaDB.
-    success = myfs_file_create(myfs, name, MYFS_FILE_TYPE_DIRECTORY, parent->file_id);
+    success = myfs_file_create(myfs, name, MYFS_FILE_TYPE_DIRECTORY, parent->file_id, NULL);
     myfs_file_free(parent);
 
     if (!success) {
-        //Not really sure what to return here. If this doesn't succeed, it means the MariaDB query failed.
-        return -EINVAL;
+        return -EIO;
     }
 
     MYFS_LOG_TRACE("End");
@@ -882,12 +931,11 @@ myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
     }
 
     //Create the file in MariaDB.
-    success = myfs_file_create(myfs, name, MYFS_FILE_TYPE_FILE, parent->file_id);
+    success = myfs_file_create(myfs, name, MYFS_FILE_TYPE_FILE, parent->file_id, NULL);
     myfs_file_free(parent);
 
     if (!success) {
-        //Not really sure what to return here. If this doesn't succeed, it means the MariaDB query failed.
-        return -EINVAL;
+        return -EIO;
     }
 
     //Look for the first available file handle.
@@ -1143,6 +1191,69 @@ myfs_rename(const char *path_old, const char *path_new, unsigned int flags) {
     return 0;
 }
 
+static int
+myfs_symlink(const char *target, const char *path) {
+    char dir[MYFS_PATH_NAME_MAX_LEN + 1], name[MYFS_FILE_NAME_MAX_LEN + 1];
+    myfs_file_t *parent;
+    myfs_t *myfs;
+    bool success;
+
+    MYFS_LOG_TRACE("Begin; Path[%s]; Target[%s]", path, target);
+
+    myfs = (myfs_t *)fuse_get_context()->private_data;
+
+    myfs_dirname(path, dir, sizeof(dir));
+    myfs_basename(path, name, sizeof(name));
+
+    parent = myfs_file_get(myfs, dir, false);
+    if (parent == NULL) {
+        return -ENOENT;
+    }
+
+    success = myfs_file_create(myfs, name, MYFS_FILE_TYPE_SOFT_LINK, parent->file_id, target);
+    myfs_file_free(parent);
+
+    if (!success) {
+        return -EIO;
+    }
+
+    MYFS_LOG_TRACE("End");
+
+    return 0;
+}
+
+static int
+myfs_readlink(const char *path, char *buf, size_t size) {
+    myfs_file_t *file;
+    myfs_t *myfs;
+    char *content;
+    size_t content_len;
+
+    MYFS_LOG_TRACE("Begin; Path[%s]; Size[%zu]", path, size);
+
+    myfs = (myfs_t *)fuse_get_context()->private_data;
+
+    file = myfs_file_get(myfs, path, false);
+    if (file == NULL) {
+        return -ENOENT;
+    }
+
+
+    content = myfs_file_get_content(myfs, file->file_id, &content_len);
+    myfs_file_free(file);
+
+    if (content == NULL) {
+        return -EIO;
+    }
+
+    //TODO: handle size check and truncation
+    strcpy(buf, content);
+    free(content);
+
+    MYFS_LOG_TRACE("End");
+    return 0;
+}
+
 int
 main(int argc, char **argv) {
     struct fuse_operations operations;
@@ -1199,6 +1310,8 @@ main(int argc, char **argv) {
         operations.read = myfs_read;
         operations.write = myfs_write;
         operations.rename = myfs_rename;
+        operations.symlink = myfs_symlink;
+        operations.readlink = myfs_readlink;
 
         ret = fuse_main(argc, argv, &operations, &myfs);
     }

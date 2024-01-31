@@ -46,9 +46,9 @@ Everything needed to use MyFS is already in the repository (I think) but will ma
       - [x] Delete
       - [x] Listing
   - [x] Symbolic Links
-      - [ ] Create
+      - [x] Create
       - [x] Delete
-      - [ ] Read
+      - [x] Read
 - [ ]  Advanced and configurable logging to syslog or other interfaces.
 - [ ]  Handle MariaDB query failures/retries. Block forever like NFS? This is important.
 - [ ]  Command line switch or application to setup the initial database.
