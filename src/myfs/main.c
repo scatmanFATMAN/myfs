@@ -154,28 +154,6 @@ myfs_file_type(const char *type) {
 }
 
 /**
- * Returns the enum file type as a string.
- *
- * @param[in] The enum file type.
- * @return The enum file type as a string.
- */
-static const char *
-myfs_file_type_str(myfs_file_type_t type) {
-    switch (type) {
-        case MYFS_FILE_TYPE_FILE:
-            return "File";
-        case MYFS_FILE_TYPE_DIRECTORY:
-            return "Directory";
-        case MYFS_FILE_TYPE_SOFT_LINK:
-            return "Soft Link";
-        case MYFS_FILE_TYPE_INVALID:
-            break;
-    }
-
-    return "Invalid";
-}
-
-/**
  * Initializes a MyFS file.
  *
  * @param[in] file The MyFS file.
@@ -186,7 +164,7 @@ myfs_file_init(myfs_file_t *file) {
 }
 
 /**
- * Frees a MyFS file.
+ * Frees a MyFS file. This also fees `file`, the pointer passed into the function.
  *
  * @param[in] file The MyFS file.
  */
@@ -195,16 +173,18 @@ myfs_file_free(myfs_file_t *file) {
     unsigned int i;
 
     if (file->parent != NULL) {
-        free(file->parent);
+        myfs_file_free(file->parent);
     }
 
     if (file->children != NULL) {
         for (i = 0; i < file->children_count; i++) {
-            free(file->children[i]);
+            myfs_file_free(file->children[i]);
         }
 
         free(file->children);
     }
+
+    free(file);
 }
 
 /**
@@ -227,13 +207,21 @@ myfs_connect(myfs_t *myfs) {
 }
 
 /**
- * Disconnects MyFS from MariaDB.
+ * Disconnects MyFS from MariaDB and cleans up.
  *
  * @param[in] myfs The MyFS context.
  */
 static void
 myfs_disconnect(myfs_t *myfs) {
+    uint64_t i;
+
     db_disconnect(&myfs->db);
+
+    for (i = 0; i < MYFS_FILES_OPEN_MAX; i++) {
+        if (myfs->files[i] != NULL) {
+            myfs_file_free(myfs->files[i]);
+        }
+    }
 }
 
 /**
@@ -310,7 +298,7 @@ myfs_file_delete(myfs_t *myfs, unsigned int file_id) {
  * @return `true` if the file was updated, otherwise `false`.
  */
 static bool
-myfs_file_update_times(myfs_t *myfs, unsigned int file_id, time_t last_accessed_on, time_t last_modified_on) {
+myfs_file_set_times(myfs_t *myfs, unsigned int file_id, time_t last_accessed_on, time_t last_modified_on) {
     bool success;
 
     success = db_queryf(&myfs->db, "UPDATE `files`\n"
@@ -722,8 +710,7 @@ myfs_truncate(const char *path, off_t size, struct fuse_file_info *fi) {
 
     success = myfs_file_set_content_size(myfs, file->file_id, size);
     if (!success) {
-        //Not really sure what to return here. If this doesn't succeed, it means the MariaDB query failed.
-        return -EINVAL;
+        return -EIO;
     }
 
     MYFS_LOG_TRACE("End");
@@ -749,10 +736,9 @@ myfs_utimens(const char *path, const struct timespec ts[2], struct fuse_file_inf
         //Get the file from the open file table
         file = myfs->files[fi->fh];
 
-        success = myfs_file_update_times(myfs, file->file_id, ts[0].tv_sec, ts[1].tv_sec);
+        success = myfs_file_set_times(myfs, file->file_id, ts[0].tv_sec, ts[1].tv_sec);
         if (!success) {
-            //Not really sure what to return here. If this doesn't succeed, it means the MariaDB query failed.
-            return -EINVAL;
+            return -EIO;
         }
     }
 
@@ -825,8 +811,7 @@ myfs_unlink(const char *path) {
     myfs_file_free(file);
 
     if (!success) {
-        //Not really sure what to return here. If this doesn't succeed, it means the MariaDB query failed.
-        return -EINVAL;
+        return -EIO;
     }
 
     MYFS_LOG_TRACE("End");
@@ -859,8 +844,7 @@ myfs_rmdir(const char *path) {
     myfs_file_free(file);
 
     if (!success) {
-        //Not really sure what to return here. If this doesn't succeed, it means the MariaDB query failed.
-        return -EINVAL;
+        return -EIO;
     }
 
     MYFS_LOG_TRACE("End");
@@ -1202,9 +1186,11 @@ myfs_symlink(const char *target, const char *path) {
 
     myfs = (myfs_t *)fuse_get_context()->private_data;
 
+    //Get the directory and name of the soft link.
     myfs_dirname(path, dir, sizeof(dir));
     myfs_basename(path, name, sizeof(name));
 
+    //Get the soft link's directory (parent).
     parent = myfs_file_get(myfs, dir, false);
     if (parent == NULL) {
         return -ENOENT;
@@ -1238,6 +1224,10 @@ myfs_readlink(const char *path, char *buf, size_t size) {
         return -ENOENT;
     }
 
+    if (file->type != MYFS_FILE_TYPE_SOFT_LINK) {
+        myfs_file_free(file);
+        return -EINVAL;
+    }
 
     content = myfs_file_get_content(myfs, file->file_id, &content_len);
     myfs_file_free(file);
@@ -1246,8 +1236,15 @@ myfs_readlink(const char *path, char *buf, size_t size) {
         return -EIO;
     }
 
-    //TODO: handle size check and truncation
-    strcpy(buf, content);
+    //Truncate the content if it's larger than the buffer size (which includes space for '\0').
+    //Increase the content length by 1 to include the '\0' which makes math easier.
+    content_len++;
+    if (content_len > size) {
+        content_len = size;
+        content[content_len - 1] = '\0';
+    }
+
+    memcpy(buf, content, content_len);
     free(content);
 
     MYFS_LOG_TRACE("End");
