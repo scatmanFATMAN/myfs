@@ -669,6 +669,70 @@ myfs_file_get(myfs_t *myfs, const char *path, bool include_children) {
 }
 
 /******************************************************************************************************
+ *                  FUSE CALLBACK COMMON FUNCTIONS
+ *****************************************************************************************************/
+
+static int
+myfs_open_helper(const char *path, bool dir, bool truncate, struct fuse_file_info *fi) {
+    myfs_file_t *file;
+    myfs_t *myfs;
+    bool success;
+    uint64_t fh = 0;
+
+    myfs = (myfs_t *)fuse_get_context()->private_data;
+
+    //Look for the first available file handle.
+    for (fh = 0; fh < MYFS_FILES_OPEN_MAX; fh++) {
+        if (myfs->files[fh] == NULL) {
+            break;
+        }
+    }
+
+    if (fh == MYFS_FILES_OPEN_MAX) {
+        log_err(MODULE, "Error opening file '%s': Maximum number of files are open", path);
+        return -EMFILE;
+    }
+
+    //If a directory is being opened, get the children
+    file = myfs_file_get(myfs, path, dir ? true : false);
+    if (file == NULL) {
+        return -ENOENT;
+    }
+
+    //If a file is being opened, truncate if asked.
+    if (!dir && truncate) {
+        success = myfs_file_set_content_size(myfs, file->file_id, 0);
+        if (!success) {
+            myfs_file_free(file);
+            return -EIO;
+        }
+
+        file->st.st_size = 0;
+    }
+
+    //Put the file into the open files table
+    myfs->files[fh] = file;
+
+    //Put the file handle into Fuse's file info struct so we can get it in other file operations
+    fi->fh = fh;
+
+    return 0;
+}
+
+static int
+myfs_release_helper(const char *path, struct fuse_file_info *fi) {
+    myfs_t *myfs;
+
+    myfs = (myfs_t *)fuse_get_context()->private_data;
+
+    //Free the file and make the file handle available again.
+    myfs_file_free(myfs->files[fi->fh]);
+    myfs->files[fi->fh] = NULL;
+
+    return 0;
+}
+
+/******************************************************************************************************
  *                  FUSE CALLBACKS
  *****************************************************************************************************/
 
@@ -791,6 +855,32 @@ myfs_chmod(const char *path, mode_t mode, struct fuse_file_info *fi) {
 }
 
 static int
+myfs_opendir(const char *path, struct fuse_file_info *fi) {
+    int ret;
+
+    MYFS_LOG_TRACE("Begin; Path[%s]; FI[%p]", path, fi);
+
+    ret = myfs_open_helper(path, true, false, fi);
+
+    MYFS_LOG_TRACE("End");
+
+    return ret;
+}
+
+static int
+myfs_releasedir(const char *path, struct fuse_file_info *fi) {
+    int ret;
+
+    MYFS_LOG_TRACE("Begin; Path[%s]; FileHandle[%zu]; FI[%p]", path, fi->fh, fi);
+
+    ret = myfs_release_helper(path, fi);
+
+    MYFS_LOG_TRACE("End");
+
+    return ret;
+}
+
+static int
 myfs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags) {
     myfs_file_t *file;
     myfs_t *myfs;
@@ -800,11 +890,7 @@ myfs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offse
 
     myfs = (myfs_t *)fuse_get_context()->private_data;
 
-    //TODO: Implement opendir so we can use fi->fh instead of finding the file again
-    file = myfs_file_get(myfs, path, true);
-    if (file == NULL) {
-        return -ENOENT;
-    }
+    file = myfs->files[fi->fh];
 
     //Always at the current and previous directory special files.
     filler(buffer, ".", NULL, 0, 0);
@@ -815,8 +901,6 @@ myfs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offse
         MYFS_LOG_TRACE("Adding [%s]", file->children[i]->name);
         filler(buffer, file->children[i]->name, NULL, 0, 0);
     }
-
-    myfs_file_free(file);
 
     MYFS_LOG_TRACE("End");
 
@@ -995,71 +1079,28 @@ myfs_flush(const char *path, struct fuse_file_info *fi) {
 
 static int
 myfs_open(const char *path, struct fuse_file_info *fi) {
-    myfs_file_t *file;
-    myfs_t *myfs;
-    uint64_t fh = 0;
-    bool success;
+    int ret;
 
     MYFS_LOG_TRACE("Begin; Path[%s]; Truncate[%s]; FI[%p]", path, fi->flags & O_TRUNC ? "Yes" : "No", fi);
 
-    myfs = (myfs_t *)fuse_get_context()->private_data;
-
-    //Look for the first available file handle.
-    for (fh = 0; fh < MYFS_FILES_OPEN_MAX; fh++) {
-        if (myfs->files[fh] == NULL) {
-            break;
-        }
-    }
-
-    if (fh == MYFS_FILES_OPEN_MAX) {
-        log_err(MODULE, "Error opening file '%s': Maximum number of files are open", path);
-        return -EMFILE;
-    }
-
-    MYFS_LOG_TRACE("Got FileHandle[%zu]", fh);
-
-    file = myfs_file_get(myfs, path, false);
-    if (file == NULL) {
-        return -ENOENT;
-    }
-
-    //If the file was opened with O_TUNC, truncate it now.
-    if (fi->flags & O_TRUNC) {
-        success = myfs_file_set_content_size(myfs, file->file_id, 0);
-        if (!success) {
-            myfs_file_free(file);
-            return -EIO;
-        }
-
-        file->st.st_size = 0;
-    }
-
-    //Put the file into the open files table
-    myfs->files[fh] = file;
-
-    //Put the file handle into Fuse's file info struct so we can get it in other file operations
-    fi->fh = fh;
+    ret = myfs_open_helper(path, false, fi->flags & O_TRUNC, fi);
 
     MYFS_LOG_TRACE("End");
 
-    return 0;
+    return ret;
 }
 
 static int
 myfs_release(const char *path, struct fuse_file_info *fi) {
-    myfs_t *myfs;
+    int ret;
 
     MYFS_LOG_TRACE("Begin; Path[%s]; FileHandle[%zu]; FI[%p]", path, fi->fh, fi);
 
-    myfs = (myfs_t *)fuse_get_context()->private_data;
-
-    //Free the file and make the file handle available again.
-    myfs_file_free(myfs->files[fi->fh]);
-    myfs->files[fi->fh] = NULL;
+    ret = myfs_release_helper(path, fi);
 
     MYFS_LOG_TRACE("End");
 
-    return 0;
+    return ret;
 }
 
 static int
@@ -1331,6 +1372,8 @@ main(int argc, char **argv) {
         operations.utimens = myfs_utimens;
         operations.chown = myfs_chown;
         operations.chmod = myfs_chmod;
+        operations.opendir = myfs_opendir;
+        operations.releasedir = myfs_releasedir;
         operations.readdir = myfs_readdir;
         operations.unlink = myfs_unlink;
         operations.rmdir = myfs_rmdir;
