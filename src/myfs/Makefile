@@ -5,7 +5,9 @@ obj=$(common)/config.o \
 	$(common)/db.o \
 	$(common)/log.o \
 	$(common)/string.o \
-	main.o
+	main.o \
+	myfs.o \
+	myfs_db.o
 
 cc=gcc
 cflags=`mariadb_config --cflags` `pkg-config fuse3 --cflags` -D_GNU_SOURCE -Wall -g
