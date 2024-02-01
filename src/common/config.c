@@ -21,6 +21,7 @@ struct config_t {
     char *name_config_file;     //!< The name of the config parameters in the config file.
     char *value;                //!< The value of the config parameter.
     char *value_default;        //!< The default value of the config parameter. Need to keep this around when displaying help.
+    config_func_t func;         //!< A function to call to set the config parameter.
     char *help;                 //!< Text to display for the help.
     config_t *next;             //!< A pointer to the next config struct in the linke;
 };
@@ -75,7 +76,7 @@ config_errorf(const char *fmt, ...) {
 }
 
 void
-config_set_default(const char *name, const char *name_command_line, const char *name_config_file, const char *value_default, const char *help) {
+config_set_default(const char *name, const char *name_command_line, const char *name_config_file, const char *value_default, config_func_t func, const char *help) {
     config_t *config;
 
     //Build the config structure.
@@ -91,6 +92,7 @@ config_set_default(const char *name, const char *name_command_line, const char *
         config->value = strdup(value_default);
         config->value_default = strdup(value_default);
     }
+    config->func = func;
     if (help != NULL) {
         config->help = strdup(help);
     }
@@ -103,6 +105,15 @@ config_set_default(const char *name, const char *name_command_line, const char *
         config->next = configs;
         configs = config;
     }
+}
+
+void
+config_set_default_bool(const char *name, const char *name_command_line, const char *name_config_file, bool value_default, config_func_t func, const char *help) {
+    char default_value_str[8];
+
+    snprintf(default_value_str, sizeof(default_value_str), "%s", value_default ? "true" : "false");
+
+    config_set_default(name, name_command_line, name_config_file, default_value_str, func, help);
 }
 
 /**
@@ -140,8 +151,9 @@ config_trim(char *str) {
 bool
 config_read(int argc, char **argv, const char *path) {
 char line[512], *key, *value, *save;
-    bool success = true;
+    bool found, success = true;
     FILE *f;
+    config_t *config;
 
     f = fopen(path, "r");
     if (f == NULL) {
@@ -173,25 +185,26 @@ char line[512], *key, *value, *save;
             if (value != NULL) {
                 config_trim(value);
 
-                if (strcmp(key, "mariadb_database") == 0) {
-                    config_set("mariadb_database", value);
+                //Loop through all the possible configs and look for the key
+                found = false;
+                config = configs;
+                while (config != NULL) {
+                    if (strcmp(key, config->name) == 0) {
+                        found = true;
+
+                        //If there's a user defined function, call that instead
+                        if (config->func != NULL) {
+                            success = config->func(key, value);
+                        }
+                        else {
+                            config_set(key, value);
+                        }
+
+                        break;
+                    }
                 }
-                else if (strcmp(key, "mariadb_host") == 0) {
-                    config_set("mariadb_host", value);
-                }
-                else if (strcmp(key, "mariadb_password") == 0) {
-                    config_set("mariadb_password", value);
-                }
-                else if (strcmp(key, "mariadb_port") == 0) {
-                    config_set("mariadb_port", value);
-                }
-                else if (strcmp(key, "mariadb_user") == 0) {
-                    config_set("mariadb_user", value);
-                }
-                else if (strcmp(key, "mount") == 0) {
-                    config_set("mount", value);
-                }
-                else {
+
+                if (!found) {
                     config_errorf("Error parsing '%s': Unknown key '%s'", path, key);
                     success = false;
                 }
@@ -236,6 +249,15 @@ config_set(const char *name, const char *value) {
 
     config->value = strdup(value);
     return true;
+}
+
+bool
+config_set_bool(const char *name, bool value) {
+    char value_str[8];
+
+    snprintf(value_str, sizeof(value_str), "%s", value ? "true" : "false");
+
+    return config_set(name, value_str);
 }
 
 const char *

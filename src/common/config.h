@@ -9,6 +9,13 @@
 #include <stdbool.h>
 
 /**
+ * A callback function to call to set the config parameter. The first parameter is the name
+ * of the parameter and the second parameter is the value.
+ * Return `false` to return `false` from `config_read()`.
+ */
+typedef bool (*config_func_t)(const char *, const char *);
+
+/**
  * Initializes the config system. Must be called before any
  * other config function is called.
  */
@@ -31,9 +38,24 @@ void config_set_error_func(void (*config_error_func)(const char *message));
  * @param[in] name_command_line The command line switch or NULL to ignore.
  * @param[in] name_config_file The config file name or NULL to ignore.
  * @param[in] value_default The default value for this parameter.
+ * @param[in] func A callback function used to set the parameter.
  * @param[in] help Help text to display if --help is used.
  */
-void config_set_default(const char *name, const char *name_command_line, const char *name_config_file, const char *value_default, const char *help);
+void config_set_default(const char *name, const char *name_command_line, const char *name_config_file, const char *value_default, config_func_t func, const char *help);
+
+/**
+ * Sets the default boolean value for a config parameter referenced by `name`. This function
+ * should be called once for every possible config parameter before config_read() is
+ * called.
+ *
+ * @param[in] name The name of the parameter.
+ * @param[in] name_command_line The command line switch or NULL to ignore.
+ * @param[in] name_config_file The config file name or NULL to ignore.
+ * @param[in] value_default The default value for this parameter.
+ * @param[in] func A callback function used to set the parameter.
+ * @param[in] help Help text to display if --help is used.
+ */
+void config_set_default_bool(const char *name, const char *name_command_line, const char *name_config_file, bool value_default, config_func_t func, const char *help);
 
 /**
  * Reads in command line arguments `argv` that's `argrc` in size. This should
@@ -61,6 +83,15 @@ bool config_read(int argc, char **argv, const char *path);
  * @return `false` if the parameter was not found, otherwise `true`.
  */
 bool config_set(const char *name, const char *value);
+
+/**
+ * Set the boolean value of a config parameter. The value is copied so you may pass in static strings.
+ *
+ * @param[in] name The name of the parameter.
+ * @param[in] value The value of the parameter.
+ * @return `false` if the parameter was not found, otherwise `true`.
+ */
+bool config_set_bool(const char *name, bool value);
 
 /**
  * Gets the value of a config parameter. If not found, NULL is returned.

@@ -14,6 +14,34 @@ config_error(const char *message) {
     log_err(MODULE, "%s", message);
 }
 
+static bool
+config_handle_log_to_stdout(const char *name, const char *value) {
+    if (strcmp(value, "true") == 0) {
+        log_to_stdout(true);
+        config_set_bool(name, true);
+    }
+    else {
+        log_to_stdout(false);
+        config_set_bool(name, false);
+    }
+
+    return true;
+}
+
+static bool
+config_handle_log_to_syslog(const char *name, const char *value) {
+    if (strcmp(value, "true") == 0) {
+        log_to_syslog(VERSION_NAME);
+        config_set_bool(name, true);
+    }
+    else {
+        log_to_syslog(NULL);
+        config_set_bool(name, false);
+    }
+
+    return true;
+}
+
 int
 main(int argc, char **argv) {
     struct fuse_operations operations;
@@ -29,12 +57,15 @@ main(int argc, char **argv) {
     config_set_error_func(config_error);
 
     //Set default config options.
-    config_set_default("mariadb_database", "--mariadb_database", "mariadb_database", "myfs",      "The MariaDB database name.");
-    config_set_default("mariadb_host",     "--mariadb_host",     "mariadb_host",     "127.0.0.1", "The MariaDB IP address or hostname.");
-    config_set_default("mariadb_password", "--mariadb_password", "mariadb_password", NULL,        "The MariaDB user's password.");
-    config_set_default("mariadb_port",     "--mariadb_port",     "mariadb_port",     "3306",      "The MariaDB port.");
-    config_set_default("mariadb_user",     "--mariadb_user",     "mariadb_user",     "myfs",      "The MariaDB user.");
-    config_set_default("mount",            "--mount",            "mount",            "/mnt/myfs", "The mount point for the file system.");
+    config_set_default_bool("log_to_stdout", "--log-to-stdout",    "log_to_stdout",    true,        config_handle_log_to_stdout, "Whether or not to log to stdout.");
+    config_set_default_bool("log_to_syslog", "--log-to-syslog",    "log_to_syslog",    false,       config_handle_log_to_syslog, "Whether or not to log to syslog.");
+    config_set_default("mariadb_database",   "--mariadb-database", "mariadb_database", "myfs",      NULL,                        "The MariaDB database name.");
+    config_set_default("mariadb_database",   "--mariadb-database", "mariadb_database", "myfs",      NULL,                        "The MariaDB database name.");
+    config_set_default("mariadb_host",       "--mariadb-host",     "mariadb_host",     "127.0.0.1", NULL,                        "The MariaDB IP address or hostname.");
+    config_set_default("mariadb_password",   "--mariadb-password", "mariadb_password", NULL,        NULL,                        "The MariaDB user's password.");
+    config_set_default("mariadb_port",       "--mariadb-port",     "mariadb_port",     "3306",      NULL,                        "The MariaDB port.");
+    config_set_default("mariadb_user",       "--mariadb-user",     "mariadb_user",     "myfs",      NULL,                        "The MariaDB user.");
+    config_set_default("mount",              "--mount",            "mount",            "/mnt/myfs", NULL,                        "The mount point for the file system.");
 
     if (!config_read(argc, argv, "/etc/myfs.d/myfs.conf")) {
         ret = 1;
