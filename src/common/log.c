@@ -37,15 +37,15 @@ log_set_severity(log_severity_t severity) {
 }
 
 void
-log_to_stdout(bool enable) {
+log_stdout(bool enable) {
     log.to_stdout = enable;
 }
 
 void
-log_to_syslog(const char *name) {
+log_syslog(const char *name) {
     if (name != NULL) {
         openlog(name, LOG_PID | LOG_NDELAY, LOG_USER);
-        log.to_syslog = false;
+        log.to_syslog = true;
     }
     else {
         closelog();

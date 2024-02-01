@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <string.h>
 #define FUSE_USE_VERSION 30
 #include <fuse.h>
@@ -15,13 +16,13 @@ config_error(const char *message) {
 }
 
 static bool
-config_handle_log_to_stdout(const char *name, const char *value) {
+config_handle_log_stdout(const char *name, const char *value) {
     if (strcmp(value, "true") == 0) {
-        log_to_stdout(true);
+        log_stdout(true);
         config_set_bool(name, true);
     }
     else {
-        log_to_stdout(false);
+        log_stdout(false);
         config_set_bool(name, false);
     }
 
@@ -29,13 +30,13 @@ config_handle_log_to_stdout(const char *name, const char *value) {
 }
 
 static bool
-config_handle_log_to_syslog(const char *name, const char *value) {
+config_handle_log_syslog(const char *name, const char *value) {
     if (strcmp(value, "true") == 0) {
-        log_to_syslog(VERSION_NAME);
+        log_syslog(VERSION_NAME);
         config_set_bool(name, true);
     }
     else {
-        log_to_syslog(NULL);
+        log_syslog(NULL);
         config_set_bool(name, false);
     }
 
@@ -45,7 +46,8 @@ config_handle_log_to_syslog(const char *name, const char *value) {
 int
 main(int argc, char **argv) {
     struct fuse_operations operations;
-    int ret = 0;
+    int i, fargc, ret = 0;
+    char **fargv;
     myfs_t myfs;
 
     log_init();
@@ -55,10 +57,11 @@ main(int argc, char **argv) {
     memset(&myfs, 0, sizeof(myfs));
 
     config_set_error_func(config_error);
+    config_set_description("%s v%d.%d.%d", VERSION_NAME, VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH);
 
     //Set default config options.
-    config_set_default_bool("log_to_stdout", "--log-to-stdout",    "log_to_stdout",    true,        config_handle_log_to_stdout, "Whether or not to log to stdout.");
-    config_set_default_bool("log_to_syslog", "--log-to-syslog",    "log_to_syslog",    false,       config_handle_log_to_syslog, "Whether or not to log to syslog.");
+    config_set_default_bool("log_stdout",    "--log-stdout",       "log_stdout",      true,        config_handle_log_stdout,    "Whether or not to log to stdout.");
+    config_set_default_bool("log_syslog",    "--log-syslog",       "log_syslog",       false,       config_handle_log_syslog,    "Whether or not to log to syslog.");
     config_set_default("mariadb_database",   "--mariadb-database", "mariadb_database", "myfs",      NULL,                        "The MariaDB database name.");
     config_set_default("mariadb_database",   "--mariadb-database", "mariadb_database", "myfs",      NULL,                        "The MariaDB database name.");
     config_set_default("mariadb_host",       "--mariadb-host",     "mariadb_host",     "127.0.0.1", NULL,                        "The MariaDB IP address or hostname.");
@@ -109,7 +112,29 @@ main(int argc, char **argv) {
         operations.symlink = myfs_symlink;
         operations.readlink = myfs_readlink;
 
-        ret = fuse_main(argc, argv, &operations, &myfs);
+        //Since MyFS has its own command line arguments, create a new argc/argv duo for FUSE. If we don't,
+        //FUSE will choke on MyFS's command line arguments. Likewise, MyFS will choke on FUSE arguments.
+        //all we really care about is -f <mount point>
+
+        //Only need 3 arguments max
+        fargv = calloc(3, sizeof(char *));
+
+        //Start with argv[0], the program name
+        fargc = 1;
+        fargv[0] = strdup(argv[0]);
+
+        //If --mount was passed in, translate it to FUSE's -f
+        if (config_has("mount")) {
+            fargv[fargc++] = strdup("-f");
+            fargv[fargc++] = config_dupe("mount");
+        }
+
+        ret = fuse_main(fargc, fargv, &operations, &myfs);
+
+        for (i = 0; i < fargc; i++) {
+            free(fargv[i]);
+        }
+        free(fargv);
 
         log_info(MODULE, "Goodbye");
     }

@@ -9,6 +9,12 @@
 #include <stdbool.h>
 
 /**
+ * A callback function to call when an error in this module occurs. The first parameter
+ * is an error message.
+ */
+typedef void (*config_error_func_t)(const char *);
+
+/**
  * A callback function to call to set the config parameter. The first parameter is the name
  * of the parameter and the second parameter is the value.
  * Return `false` to return `false` from `config_read()`.
@@ -27,7 +33,19 @@ void config_init();
  */
 void config_free();
 
-void config_set_error_func(void (*config_error_func)(const char *message));
+/**
+ * Sets an error callback to be called when an error occurs.
+ *
+ * @param[in] func A function pointer to the error handler.
+ */
+void config_set_error_func(config_error_func_t func);
+
+/**
+ * Sets the description of the program which is printed out when --help is used.
+ *
+ * @param[in] fmt A printf styled format string.
+ */
+void config_set_description(const char *fmt, ...);
 
 /**
  * Sets the default value for a config parameter referenced by `name`. This function
@@ -76,6 +94,14 @@ void config_set_default_bool(const char *name, const char *name_command_line, co
 bool config_read(int argc, char **argv, const char *path);
 
 /**
+ * Determines if the config parameter is set.
+ *
+ * @param[in] name The name of the parameter.
+ * @return `true` if the parameter is set and its value is not `NULL`.
+ */
+bool config_has(const char *name);
+
+/**
  * Set the value of a config parameter. The value is copied so you may pass in static strings.
  *
  * @param[in] name The name of the parameter.
@@ -100,6 +126,16 @@ bool config_set_bool(const char *name, bool value);
  * @return The value of of the parameter or NULL if not found.
  */
 const char * config_get(const char *name);
+
+/**
+ * Gets the value of a config parameter. If not found, NULL is returned. This value
+ * must be free'd after use.
+ *
+ * @param[in] name The name of the parameter.
+ * @return The value of of the parameter or NULL if not found.
+ */
+char * config_dupe(const char *name);
+
 
 /**
  * Gets the value of a config parameter as an unsigned int. If not found, 0 is returned.

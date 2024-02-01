@@ -26,8 +26,14 @@ struct config_t {
     config_t *next;             //!< A pointer to the next config struct in the linke;
 };
 
+/** Linked list of all the config parameters. */
 static config_t *configs = NULL;
-static void (*config_error)(const char *message) = NULL;
+
+/** A description of the program to print out when --help is used. */
+static char *config_description = NULL;
+
+/** Error callback function when an error occurs. */
+static config_error_func_t config_error_func = NULL;
 
 void
 config_init() {
@@ -54,11 +60,28 @@ config_free() {
         free(config_del->help);
         free(config_del);
     }
+
+    if (config_description != NULL) {
+        free(config_description);
+    }
 }
 
 void
-config_set_error_func(void (*config_error_func)(const char *message)) {
-    config_error = config_error_func;
+config_set_error_func(config_error_func_t func) {
+    config_error_func = func;
+}
+
+void
+config_set_description(const char *fmt, ...) {
+    va_list ap;
+
+    if (config_description != NULL) {
+        free(config_description);
+    }
+
+    va_start(ap, fmt);
+    vasprintf(&config_description, fmt, ap);
+    va_end(ap);
 }
 
 static void
@@ -66,12 +89,12 @@ config_errorf(const char *fmt, ...) {
     char message[512];
     va_list ap;
 
-    if (config_error != NULL) {
+    if (config_error_func != NULL) {
         va_start(ap, fmt);
         vsnprintf(message, sizeof(message), fmt, ap);
         va_end(ap);
 
-        config_error(message);
+        config_error_func(message);
     }
 }
 
@@ -148,8 +171,35 @@ config_trim(char *str) {
     return str;
 }
 
-bool
-config_read(int argc, char **argv, const char *path) {
+static void
+config_print_help() {
+    config_t *config;
+
+    if (config_description != NULL) {
+        fprintf(stderr, "%s\n\n", config_description);
+    }
+
+    fprintf(stderr, "-----------------------------------------------------------------------------------------------------------------------------------\n");
+    fprintf(stderr, "%-25s%-25s%-25s%-25s%-20s\n", "Name", "Command Line", "Config File", "Default Value", "Help");
+    fprintf(stderr, "-----------------------------------------------------------------------------------------------------------------------------------\n");
+
+    config = configs;
+    while (config != NULL) {
+        fprintf(stderr, "%-25s", config->name);
+        fprintf(stderr, "%-25s", config->name_command_line != NULL ? config->name_command_line : "");
+        fprintf(stderr, "%-25s", config->name_config_file != NULL ? config->name_config_file : "");
+        fprintf(stderr, "%-25s", config->value_default != NULL ? config->value_default : "");
+        fprintf(stderr, "%-20s", config->help);
+        fprintf(stderr, "\n");
+        config = config->next;
+    }
+
+    fprintf(stderr, "------------------------------------------------------------------------------------------------------------------------------------\n");
+    fprintf(stderr, "\n");
+}
+
+static bool
+config_read_file(const char *path) {
 char line[512], *key, *value, *save;
     bool found, success = true;
     FILE *f;
@@ -189,19 +239,21 @@ char line[512], *key, *value, *save;
                 found = false;
                 config = configs;
                 while (config != NULL) {
-                    if (strcmp(key, config->name) == 0) {
+                    if (strcmp(key, config->name_config_file) == 0) {
                         found = true;
 
                         //If there's a user defined function, call that instead
                         if (config->func != NULL) {
-                            success = config->func(key, value);
+                            success = config->func(config->name, value);
                         }
                         else {
-                            config_set(key, value);
+                            config_set(config->name, value);
                         }
 
                         break;
                     }
+
+                    config = config->next;
                 }
 
                 if (!found) {
@@ -214,6 +266,64 @@ char line[512], *key, *value, *save;
 
     fclose(f);
     return success;
+}
+
+static bool
+config_read_command_line(int argc, char **argv) {
+    config_t *config;
+    bool found;
+    int i;
+
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0) {
+            config_print_help();
+            return false;
+        }
+
+        //Make sure there's a value associated with the parameter.
+        if (i + 1 >= argc) {
+            config_errorf("Error parsing command line arguments: Parameter '%s' has no value", argv[i]);
+            return false;
+        }
+
+        //Look for the command line parameter in the config list.
+        found = false;
+        config = configs;
+        while (config != NULL) {
+            if (strcmp(argv[i], config->name_command_line) == 0) {
+                found = true;
+
+                //If there's a user defined function, call that instead.
+                if (config->func != NULL) {
+                    if (!config->func(config->name, argv[i + 1])) {
+                        return false;
+                    }
+                }
+                else {
+                    config_set(config->name, argv[i + 1]);
+                }
+
+                break;
+            }
+
+            config = config->next;
+        }
+
+        if (!found) {
+            config_errorf("Error parsing command line arguments: Parameter '%s' not found", argv[i]);
+            return false;
+        }
+
+        //Skip the value and go to the next config parameter.
+        i++;
+    }
+
+    return true;
+}
+
+bool
+config_read(int argc, char **argv, const char *path) {
+    return config_read_file(path) && config_read_command_line(argc, argv);
 }
 
 static config_t *
@@ -230,6 +340,15 @@ config_find(const char *name) {
     }
 
     return NULL;
+}
+
+bool
+config_has(const char *name) {
+    config_t *config;
+
+    config = config_find(name);
+
+    return config != NULL && config->value != NULL;
 }
 
 bool
@@ -273,15 +392,20 @@ config_get(const char *name) {
     return config->value;
 }
 
+char *
+config_dupe(const char *name) {
+    const char *value;
+
+    value = config_get(name);
+
+    return value == NULL ? NULL : strdup(value);
+}
+
 unsigned int
 config_get_uint(const char *name) {
-    config_t *config;
+    const char *value;
 
-    config = config_find(name);
-    if (config == NULL) {
-        config_errorf("Error getting uint config '%s': Not found", name);
-        return 0;
-    }
+    value = config_get(name);
 
-    return strtoul(config->value, NULL, 10);
+    return value == NULL ? 0 : strtoul(value, NULL, 10);
 }

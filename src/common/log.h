@@ -48,7 +48,7 @@ void log_set_severity(log_severity_t severity);
  *
  * @param[in] enable `true` to turn on console logging, `false` to disable it.
  */
-void log_to_stdout(bool enable);
+void log_stdout(bool enable);
 
 /**
  * Turn on or off logging to syslog. If `name` is not `NULL`, then `openlog()` is called. If
@@ -56,7 +56,7 @@ void log_to_stdout(bool enable);
  *
  * @param[in] name The name sent to syslog.
  */
-void log_to_syslog(const char *name);
+void log_syslog(const char *name);
 
 /**
  * Writes a log message unless the `severity` is greater than the configured logging severity.
