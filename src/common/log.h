@@ -6,6 +6,8 @@
  * A logging module.
  */
 
+#include <stdbool.h>
+
 /**
  * Convenience macros so the severity is chosen by the macro name.
  */
@@ -33,6 +35,28 @@ void log_init();
  * Frees the log system. No more log functions can be called after this.
  */
 void log_free();
+
+/**
+ * Sets the minimum logging level.
+ *
+ * @param[in] severity The minimum logging severity.
+ */
+void log_set_severity(log_severity_t severity);
+
+/**
+ * Turn on or off logging to the console.
+ *
+ * @param[in] enable `true` to turn on console logging, `false` to disable it.
+ */
+void log_to_stdout(bool enable);
+
+/**
+ * Turn on or off logging to syslog. If `name` is not `NULL`, then `openlog()` is called. If
+ * `name` is `NULL`, then `closelog()` is called.
+ *
+ * @param[in] name The name sent to syslog.
+ */
+void log_to_syslog(const char *name);
 
 /**
  * Writes a log message unless the `severity` is greater than the configured logging severity.

@@ -79,6 +79,8 @@ main(int argc, char **argv) {
         operations.readlink = myfs_readlink;
 
         ret = fuse_main(argc, argv, &operations, &myfs);
+
+        log_info(MODULE, "Goodbye");
     }
 
 done:
