@@ -6,6 +6,7 @@
  * Custom string functions.
  */
 
+#include <stdbool.h>
 #include <string.h>
 
 /**
@@ -17,3 +18,12 @@
  * @return The number of characters copied, not including the NULL character.
  */
 size_t strlcpy(char *dst, const char *src, size_t size);
+
+/**
+ * Determines if the string `str` ends with the string `match`.\n"
+ *
+ * @param[in] str The string to search.
+ * @param[in] match The string to look for.
+ * @return `true` if `str` ends with `match`, otherwise `false`.
+ */
+bool str_ends_with(const char *str, const char *match);

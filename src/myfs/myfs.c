@@ -4,10 +4,10 @@
 #include <time.h>
 #include <errno.h>
 #include <unistd.h>
-#include <libgen.h>
 #include "../common/log.h"
 #include "../common/config.h"
 #include "../common/string.h"
+#include "util.h"
 #include "myfs_db.h"
 #include "myfs.h"
 
@@ -25,60 +25,6 @@
 #else
 # define MYFS_LOG_TRACE(fmt, ...)
 #endif
-
-/**
- * Parses a path into its directory component and copies it into a buffer.
- *
- * @param[in] path The path to get the directory component of.
- * @param[out] dst The buffer to copy the directory component into.
- * @param[in[ size The size of `buffer`.
- * @return a pointer to `dst`.
- */
-static const char *
-myfs_dirname(const char *path, char *dst, size_t size) {
-    char *path_dupe, *dir;
-
-    //Duplicate path since dirname() modifies the argument
-    path_dupe = strdup(path);
-
-    //Return a pointer to the modified path (eg. a \0 is added at the last '/').
-    dir = dirname(path_dupe);
-
-    //Copy into the return buffer.
-    strlcpy(dst, dir, size);
-
-    //Free the duplicated path.
-    free(path_dupe);
-
-    return dst;
-}
-
-/**
- * Parses a path into its file name component and copies it into a buffer.
- *
- * @param[in] path The path to get the file name component of.
- * @param[out] dst The buffer to copy the file name component into.
- * @param[in[ size The size of `buffer`.
- * @return a pointer to `dst`.
- */
-static const char *
-myfs_basename(const char *path, char *dst, size_t size) {
-    char *path_dupe, *name;
-
-    //Duplicate path since banename() modifies the argument
-    path_dupe = strdup(path);
-
-    //Return a pointer to the modified name.
-    name = basename(path_dupe);
-
-    //Copy into the return buffer.
-    strlcpy(dst, name, size);
-
-    //Free the duplicated path.
-    free(path_dupe);
-
-    return dst;
-}
 
 void
 myfs_file_init(myfs_file_t *file) {
@@ -526,8 +472,8 @@ myfs_mkdir(const char *path, mode_t mode) {
     myfs = (myfs_t *)fuse_get_context()->private_data;
 
     //Get the path components.
-    myfs_dirname(path, dir, sizeof(dir));
-    myfs_basename(path, name, sizeof(name));
+    util_dirname(path, dir, sizeof(dir));
+    util_basename(path, name, sizeof(name));
 
     MYFS_LOG_TRACE("Creating folder '%s' in '%s'", name, dir);
 
@@ -565,8 +511,8 @@ myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
     myfs = (myfs_t *)fuse_get_context()->private_data;
 
     //Get the path components.
-    myfs_dirname(path, dir, sizeof(dir));
-    myfs_basename(path, name, sizeof(name));
+    util_dirname(path, dir, sizeof(dir));
+    util_basename(path, name, sizeof(name));
 
     MYFS_LOG_TRACE("Creating file '%s' in '%s'", name, dir);
 
@@ -757,8 +703,8 @@ myfs_rename(const char *path_old, const char *path_new, unsigned int flags) {
     myfs = (myfs_t *)fuse_get_context()->private_data;
 
     //Get the directoy and name of the new path name.
-    myfs_dirname(path_new, path_new_dir, sizeof(path_new_dir));
-    myfs_basename(path_new, name_new, sizeof(name_new));
+    util_dirname(path_new, path_new_dir, sizeof(path_new_dir));
+    util_basename(path_new, name_new, sizeof(name_new));
 
     //Get the old file.
     file = myfs_file_get(myfs, path_old, false);
@@ -806,8 +752,8 @@ myfs_symlink(const char *target, const char *path) {
     myfs = (myfs_t *)fuse_get_context()->private_data;
 
     //Get the directory and name of the soft link.
-    myfs_dirname(path, dir, sizeof(dir));
-    myfs_basename(path, name, sizeof(name));
+    util_dirname(path, dir, sizeof(dir));
+    util_basename(path, name, sizeof(name));
 
     //Get the soft link's directory (parent).
     parent = myfs_file_get(myfs, dir, false);
