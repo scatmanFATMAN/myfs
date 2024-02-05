@@ -63,7 +63,9 @@ util_create_prompt_helper(char *dst, int size, const char *fmt, va_list ap, bool
         tcsetattr(STDIN_FILENO, TCSANOW, &t);
     }
 
-    fgets(dst, size, stdin);
+    while (fgets(dst, size, stdin) == NULL) {
+        ;
+    }
 
     //Turn back on echo'ing to the console if needed.
     if (no_echo) {

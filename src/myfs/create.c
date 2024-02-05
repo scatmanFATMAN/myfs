@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <unistd.h>
+#include <sys/stat.h>
 #include "../common/config.h"
 #include "../common/db.h"
 #include "../common/string.h"
@@ -30,6 +31,7 @@ static bool
 create_run_prompt(create_params_t *params) {
     char input[2048], dir[1024 - 128];
     bool success, exists;
+    struct stat st;
 
     printf("Welcome to the MyFS utility to create and initialize a MyFS instance.\n");
     printf("\n");
@@ -38,8 +40,8 @@ create_run_prompt(create_params_t *params) {
     printf("For each prompt, a default value is given in brackets and may be used by simply pressing 'Enter'. Passwords do not have a default value. For password prompts, you will not see the characters you type but the password is being captured.\n");
 
     //Prompt the user for the config file location
-    printf("\n");
     while (true) {
+        printf("\n");
         util_create_prompt(input, sizeof(input), "Config file [%s]", params->config_path);
 
         if (input[0] != '\0') {
@@ -63,6 +65,38 @@ create_run_prompt(create_params_t *params) {
         if (access(dir, W_OK) != 0) {
             printf("  %s is not writable: %s.\n", dir, strerror(errno));
             continue;
+        }
+
+        break;
+    }
+
+    //Prompt for the mount point.
+    while (true) {
+        printf("\n");
+        util_create_prompt(input, sizeof(input), "Mount Point [%s]", params->mount);
+        if (input[0] != '\0') {
+            strlcpy(params->mount, input, sizeof(params->mount));
+            printf("  Mount changed to '%s'.\n", params->mount);
+        }
+
+        printf("\n");
+        printf("Checking to see if '%s' exists.\n", params->mount);
+        if (stat(params->mount, &st) == 0) {
+            printf("  Mount point already exists.\n");
+
+            if (!S_ISDIR(st.st_mode)) {
+                printf("  Mount point is not a directory.\n");
+                continue;
+            }
+        }
+        else {
+            printf("  Mount point does not exist, creating it.\n");
+            if (mkdir(params->mount, 0750) != 0) {
+                printf("  Error creating mount point: %s.\n", strerror(errno));
+                continue;
+            }
+
+            printf("  Mount point created.\n");
         }
 
         break;
@@ -273,13 +307,15 @@ create_run_create_config(create_params_t *params) {
 
 static bool
 create_run_create_database(create_params_t *params) {
+    char sql[2048];
     bool success;
 
     printf("\n");
     printf("Creating database '%s'\n", params->mariadb_database);
 
     //Create the database.
-    success = db_queryf(&params->db, "CREATE DATABASE `%s`", params->mariadb_database);
+    create_get_sql_database(sql, sizeof(sql), params->mariadb_database);
+    success = db_queryf(&params->db, "%s", sql);
     if (!success) {
         printf("  Error creating database '%s': %s\n", params->mariadb_database, db_error(&params->db));
         return false;
@@ -297,21 +333,8 @@ create_run_create_database(create_params_t *params) {
     }
 
     //Create the `files` table.
-    success = db_queryf(&params->db, "CREATE TABLE `files` (\n"
-                                     "    `file_id` int(10) unsigned NOT NULL AUTO_INCREMENT,\n"
-                                     "    `parent_id` int(10) unsigned NOT NULL,\n"
-                                     "    `name` varchar(64) NOT NULL,\n"
-                                     "    `type` enum('File','Directory','Soft Link') NOT NULL,\n"
-                                     "    `content` longblob NOT NULL,\n"
-                                     "    `created_on` int(10) unsigned NOT NULL,\n"
-                                     "    `last_accessed_on` int(10) unsigned NOT NULL,\n"
-                                     "    `last_modified_on` int(10) unsigned NOT NULL,\n"
-                                     "    `last_status_changed_on` int(10) unsigned NOT NULL,\n"
-                                     "    PRIMARY KEY (`file_id`),\n"
-                                     "    KEY `fk_files_parentid` (`parent_id`),\n"
-                                     "    CONSTRAINT `fk_files_parentid` FOREIGN KEY (`parent_id`) REFERENCES `files` (`file_id`) ON DELETE CASCADE ON UPDATE CASCADE\n"
-                                     ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
-
+    create_get_sql_database_table(sql, sizeof(sql));
+    success = db_queryf(&params->db, "%s", sql);
     if (!success) {
         printf("  Error creating table 'files': %s\n", db_error(&params->db));
         return false;
@@ -321,7 +344,8 @@ create_run_create_database(create_params_t *params) {
     if (params->create_database_user) {
         printf("Creating database user '%s'\n", params->mariadb_user);
 
-        success = db_queryf(&params->db, "CREATE USER '%s'@'%s' IDENTIFIED BY '%s'", params->mariadb_user, params->mariadb_user_host, params->mariadb_password1);
+        create_get_sql_database_user_create(sql, sizeof(sql), params->mariadb_user, params->mariadb_user_host, params->mariadb_password1);
+        success = db_queryf(&params->db, "%s", sql);
         if (!success) {
             printf("  Error creating user '%s': %s\n", params->mariadb_user, db_error(&params->db));
             return false;
@@ -330,13 +354,15 @@ create_run_create_database(create_params_t *params) {
 
     printf("Granting privileges to database user '%s'\n", params->mariadb_user);
 
-    success = db_queryf(&params->db, "GRANT USAGE ON `%s`.* TO '%s'@'%s'", params->mariadb_database, params->mariadb_user, params->mariadb_user_host);
+    create_get_sql_database_user_grant1(sql, sizeof(sql), params->mariadb_user, params->mariadb_host, params->mariadb_database);
+    success = db_queryf(&params->db, "%s", sql);
     if (!success) {
         printf("  Error granting usage to user '%s': %s\n", params->mariadb_user, db_error(&params->db));
         return false;
     }
 
-    success = db_queryf(&params->db, "GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'%s' WITH GRANT OPTION", params->mariadb_database, params->mariadb_user, params->mariadb_user_host);
+    create_get_sql_database_user_grant2(sql, sizeof(sql), params->mariadb_user, params->mariadb_host, params->mariadb_database);
+    success = db_queryf(&params->db, "%s", sql);
     if (!success) {
         printf("  Error granting privileges to user '%s': %s\n", params->mariadb_user, db_error(&params->db));
         return false;
@@ -384,6 +410,7 @@ create_run() {
     strcpy(params.mariadb_user_host, "%");
     strcpy(params.mariadb_database, config_get("mariadb_database"));
     strcpy(params.mariadb_port, config_get("mariadb_port"));
+    strcpy(params.mount, config_get("mount"));
 
     success = create_run_prompt(&params) &&
               create_run_create_config(&params) &&
@@ -395,4 +422,42 @@ create_run() {
         printf("\n");
         printf("MyFS has been setup.\n");
     }
+}
+
+void
+create_get_sql_database(char *dst, size_t size, const char *name) {
+    snprintf(dst, size, "CREATE DATABASE `%s`;", name);
+}
+
+void
+create_get_sql_database_table(char *dst, size_t size) {
+    strlcpy(dst, "CREATE TABLE `files` (\n"
+                 "    `file_id` int(10) unsigned NOT NULL AUTO_INCREMENT,\n"
+                 "    `parent_id` int(10) unsigned NOT NULL,\n"
+                 "    `name` varchar(64) NOT NULL,\n"
+                 "    `type` enum('File','Directory','Soft Link') NOT NULL,\n"
+                 "    `content` longblob NOT NULL,\n"
+                 "    `created_on` int(10) unsigned NOT NULL,\n"
+                 "    `last_accessed_on` int(10) unsigned NOT NULL,\n"
+                 "    `last_modified_on` int(10) unsigned NOT NULL,\n"
+                 "    `last_status_changed_on` int(10) unsigned NOT NULL,\n"
+                 "    PRIMARY KEY (`file_id`),\n"
+                 "    KEY `fk_files_parentid` (`parent_id`),\n"
+                 "    CONSTRAINT `fk_files_parentid` FOREIGN KEY (`parent_id`) REFERENCES `files` (`file_id`) ON DELETE CASCADE ON UPDATE CASCADE\n"
+                 ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;", size);
+}
+
+void
+create_get_sql_database_user_create(char *dst, size_t size, const char *user, const char *host, const char *password) {
+    snprintf(dst, size, "CREATE USER '%s'@'%s' IDENTIFIED BY '%s';", user, host, password);
+}
+
+void
+create_get_sql_database_user_grant1(char *dst, size_t size, const char *user, const char *host, const char *database) {
+    snprintf(dst, size, "GRANT USAGE ON `%s`.* TO '%s'@'%s';", database, user, host);
+}
+
+void
+create_get_sql_database_user_grant2(char *dst, size_t size, const char *user, const char *host, const char *database) {
+    snprintf(dst, size, "GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'%s' WITH GRANT OPTION;", database, user, host);
 }

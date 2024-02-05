@@ -76,9 +76,39 @@ void config_set_default(const char *name, const char *name_command_line, const c
 void config_set_default_bool(const char *name, const char *name_command_line, const char *name_config_file, bool value_default, config_func_t func, const char *help);
 
 /**
+ * Parses this config's command like parameter before the configuration file.
+ *
+ * @param[in] The name of the parameter.
+ */
+void config_set_priority(const char *name);
+
+/**
+ * Reads a config file located at `path`.
+ *
+ * @param[in] path The config file to read.
+ * @return `false` if an invalid config was found, otherwise `true`.
+ */
+bool config_read_file(const char *path);
+
+/**
+ * Reads in command line arguments `argv` that's `argc` in size. This should
+ * typically be the `argc` and `argv` passed into `main()`. If `priority` is set to `true`,
+ * only parameters that have been set to a priority will be evaluated.
+ *
+ * @param[in] argc The number of command line arguments in `argv`.
+ * @param[in] argv An array of command line arguments.
+ * @param[in] priority `true` to only look at high priority configs, otherwise `false` to only look at low priority configs.
+ * @return `false` if an invalid config was found, otherwise `true`.
+ */
+bool config_read_command_line(int argc, char **argv, bool priority);
+
+/**
  * Reads in command line arguments `argv` that's `argrc` in size. This should
- * typically be the `argc` and `argv` passed into main(). This also reads a config
- * file located at `path`.
+ * typically be the `argc` and `argv` passed into `main()`. This also reads a config
+ * file located at `path`. This is equivalent to calling:
+ * `config_read_command_line(argc, argv, true);`
+ * `config_read_file(path);`
+ * `config_read_command_line(argc, argv, false);`
  *
  * The file is read first, then the command line arguments. That means the command
  * line arguments overwrite (take precedence over) anything set in the config file.

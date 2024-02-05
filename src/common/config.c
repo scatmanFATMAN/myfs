@@ -23,6 +23,7 @@ struct config_t {
     char *value_default;        //!< The default value of the config parameter. Need to keep this around when displaying help.
     config_func_t func;         //!< A function to call to set the config parameter.
     char *help;                 //!< Text to display for the help.
+    bool priority;              //!< Parse this config's command line before the config file.
     config_t *next;             //!< A pointer to the next config struct in the linke;
 };
 
@@ -71,19 +72,6 @@ config_set_error_func(config_error_func_t func) {
     config_error_func = func;
 }
 
-void
-config_set_description(const char *fmt, ...) {
-    va_list ap;
-
-    if (config_description != NULL) {
-        free(config_description);
-    }
-
-    va_start(ap, fmt);
-    vasprintf(&config_description, fmt, ap);
-    va_end(ap);
-}
-
 static void
 config_errorf(const char *fmt, ...) {
     char message[512];
@@ -95,6 +83,24 @@ config_errorf(const char *fmt, ...) {
         va_end(ap);
 
         config_error_func(message);
+    }
+}
+
+void
+config_set_description(const char *fmt, ...) {
+    va_list ap;
+    int ret;
+
+    if (config_description != NULL) {
+        free(config_description);
+    }
+
+    va_start(ap, fmt);
+    ret = vasprintf(&config_description, fmt, ap);
+    va_end(ap);
+
+    if (ret == -1) {
+        config_errorf("Error setting description: Out of memory");
     }
 }
 
@@ -137,6 +143,36 @@ config_set_default_bool(const char *name, const char *name_command_line, const c
     snprintf(default_value_str, sizeof(default_value_str), "%s", value_default ? "true" : "false");
 
     config_set_default(name, name_command_line, name_config_file, default_value_str, func, help);
+}
+
+static config_t *
+config_find(const char *name) {
+    config_t *config;
+
+    config = configs;
+    while (config != NULL) {
+        if (strcmp(config->name, name) == 0) {
+            return config;
+        }
+
+        config = config->next;
+    }
+
+    return NULL;
+}
+
+void
+config_set_priority(const char *name) {
+    config_t *config;
+
+    config = config_find(name);
+
+    if (config == NULL) {
+        config_errorf("Error setting priority for '%s': Config not found", name);
+        return;
+    }
+
+    config->priority = true;
 }
 
 /**
@@ -198,9 +234,9 @@ config_print_help() {
     fprintf(stderr, "\n");
 }
 
-static bool
+bool
 config_read_file(const char *path) {
-char line[512], *key, *value, *save;
+    char line[512], *key, *value, *save;
     bool found, success = true;
     FILE *f;
     config_t *config;
@@ -239,7 +275,7 @@ char line[512], *key, *value, *save;
                 found = false;
                 config = configs;
                 while (config != NULL) {
-                    if (strcmp(key, config->name_config_file) == 0) {
+                    if (config->name_config_file != NULL && strcmp(key, config->name_config_file) == 0) {
                         found = true;
 
                         //If there's a user defined function, call that instead
@@ -268,8 +304,8 @@ char line[512], *key, *value, *save;
     return success;
 }
 
-static bool
-config_read_command_line(int argc, char **argv) {
+bool
+config_read_command_line(int argc, char **argv, bool priority) {
     config_t *config;
     bool found;
     int i;
@@ -290,7 +326,7 @@ config_read_command_line(int argc, char **argv) {
         found = false;
         config = configs;
         while (config != NULL) {
-            if (strcmp(argv[i], config->name_command_line) == 0) {
+            if (config->name_command_line != NULL && strcmp(argv[i], config->name_command_line) == 0 && ((priority && config->priority) || (!priority && !config->priority))) {
                 found = true;
 
                 //If there's a user defined function, call that instead.
@@ -323,23 +359,9 @@ config_read_command_line(int argc, char **argv) {
 
 bool
 config_read(int argc, char **argv, const char *path) {
-    return config_read_file(path) && config_read_command_line(argc, argv);
-}
-
-static config_t *
-config_find(const char *name) {
-    config_t *config;
-
-    config = configs;
-    while (config != NULL) {
-        if (strcmp(config->name, name) == 0) {
-            return config;
-        }
-
-        config = config->next;
-    }
-
-    return NULL;
+    return config_read_command_line(argc, argv, true) &&
+           config_read_file(path) &&
+           config_read_command_line(argc, argv, false);
 }
 
 bool

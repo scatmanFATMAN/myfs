@@ -12,8 +12,8 @@ obj=$(common)/config.o \
 	util.o
 
 cc=gcc
-cflags=`mariadb_config --cflags` `pkg-config fuse3 --cflags` -D_GNU_SOURCE -Wall -g
-libs=`mariadb_config --libs` `pkg-config fuse3 --libs`
+cflags=`mariadb_config --cflags` `pkg-config fuse3 --cflags` -D_GNU_SOURCE -Wall -Wsign-compare -fsanitize=address,undefined -g
+libs=`mariadb_config --libs` `pkg-config fuse3 --libs` -fsanitize=address,undefined
 
 all: $(app)
 

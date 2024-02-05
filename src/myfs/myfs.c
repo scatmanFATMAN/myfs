@@ -610,7 +610,7 @@ myfs_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse
 
     //`size` is usually 4kb so handle partial reads.
     //Also handle muliple reads if the file is bigger than 4k (eg. `offset` > 0)
-    if (offset + size > file->st.st_size) {
+    if (offset + size > (size_t)file->st.st_size) {
         size = file->st.st_size - offset;
         MYFS_LOG_TRACE("New Size[%zu]", size);
     }
