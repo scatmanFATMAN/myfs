@@ -1,9 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
-#include <stdarg.h>
 #include <errno.h>
 #include <unistd.h>
-#include <termios.h>
 #include "../common/config.h"
 #include "../common/db.h"
 #include "../common/string.h"
@@ -18,80 +16,31 @@ typedef struct {
     char mariadb_password_root[128];
     char mariadb_password1[128];
     char mariadb_password2[128];
+    char mariadb_user_host[512];
     char mariadb_database[128];
     char mariadb_port[8];
     char mount[1024];
     db_t db;
+    bool create_database_user;
     bool config_created;
     bool database_created;
 } create_params_t;
 
-static void
-create_prompt_helper(char *dst, int size, const char *fmt, va_list ap, bool no_echo) {
-    struct termios t;
-    char *ptr;
-
-    vprintf(fmt, ap);
-
-    printf(": ");
-    fflush(stdout);
-
-    //Turn off echo'ing to the console if needed.
-    if (no_echo) {
-        tcgetattr(STDIN_FILENO, &t);
-        t.c_lflag &= ~ECHO;
-        tcsetattr(STDIN_FILENO, TCSANOW, &t);
-    }
-
-    fgets(dst, size, stdin);
-
-    //Turn back on echo'ing to the console if needed.
-    if (no_echo) {
-        tcgetattr(STDIN_FILENO, &t);
-        t.c_lflag |= ECHO;
-        tcsetattr(STDIN_FILENO, TCSANOW, &t);
-        printf("\n");
-    }
-
-    //Remove the newline.
-    ptr = strchr(dst, '\n');
-    if (ptr != NULL) {
-        *ptr = '\0';
-    }
-}
-
-static void
-create_prompt(char *dst, int size, const char *fmt, ...) {
-    va_list ap;
-
-    va_start(ap, fmt);
-    create_prompt_helper(dst, size, fmt, ap, false);
-    va_end(ap);
-}
-
-static void
-create_prompt_password(char *dst, int size, const char *fmt, ...) {
-    va_list ap;
-
-    va_start(ap, fmt);
-    create_prompt_helper(dst, size, fmt, ap, true);
-    va_end(ap);
-}
-
 static bool
 create_run_prompt(create_params_t *params) {
-    char input[2048];
+    char input[2048], dir[1024 - 128];
+    bool success, exists;
 
     printf("Welcome to the MyFS utility to create and initialize a MyFS instance.\n");
     printf("\n");
     printf("You'll be prompted to enter a file path to put the config file, database credentials for a super user that can create a database, and database credentials for the MyFS database. The database host and port will be the same for both set of credentials.\n");
     printf("\n");
     printf("For each prompt, a default value is given in brackets and may be used by simply pressing 'Enter'. Passwords do not have a default value. For password prompts, you will not see the characters you type but the password is being captured.\n");
-    printf("\n");
 
     //Prompt the user for the config file location
+    printf("\n");
     while (true) {
-        create_prompt(input, sizeof(input), "Config file [%s]", params->config_path);
+        util_create_prompt(input, sizeof(input), "Config file [%s]", params->config_path);
 
         if (input[0] != '\0') {
             if (!str_ends_with(input, ".conf")) {
@@ -103,67 +52,165 @@ create_run_prompt(create_params_t *params) {
             printf("  Config file path changed to %s.\n", params->config_path);
         }
 
-        //Change or 'Enter' which means use the default.
-        break;
-    }
-
-    //Prompt the user for MariaDB credentials to create the database
-    create_prompt(input, sizeof(input), "MariaDB host[%s]", params->mariadb_host);
-    if (input[0] != '\0') {
-        strlcpy(params->mariadb_host, input, sizeof(params->mariadb_host));
-        printf("  MariaDB host changed to %s.\n", params->mariadb_host);
-    }
-
-    create_prompt(input, sizeof(input), "MariaDB port[%s]", params->mariadb_port);
-    if (input[0] != '\0') {
-        strlcpy(params->mariadb_port, input, sizeof(params->mariadb_port));
-        printf("  MariaDB port changed to %s.\n", params->mariadb_port);
-    }
-
-    create_prompt(input, sizeof(input), "MariaDB super user[%s]", params->mariadb_user_root);
-    if (input[0] != '\0') {
-        strlcpy(params->mariadb_user_root, input, sizeof(params->mariadb_user_root));
-        printf("  MariaDB super user changed to %s.\n", params->mariadb_user_root);
-    }
-
-    while (params->mariadb_password_root[0] == '\0') {
-        create_prompt_password(input, sizeof(input), "MariaDB super user password");
-        strlcpy(params->mariadb_password_root, input, sizeof(params->mariadb_password_root));
-    }
-    printf("  MariaDB super user password accepted.\n");
-
-    create_prompt(input, sizeof(input), "MariaDB MyFS user[%s]", params->mariadb_user);
-    if (input[0] != '\0') {
-        strlcpy(params->mariadb_user, input, sizeof(params->mariadb_user));
-        printf("  MariaDB MyFS user changed to %s.\n", params->mariadb_user);
-    }
-
-    while (true) {
-        input[0] = '\0';
-        while (input[0] == '\0') {
-            create_prompt_password(input, sizeof(input), "MariaDB MyFS user password");
-            strlcpy(params->mariadb_password1, input, sizeof(params->mariadb_password1));
+        //Make sure the file doesn't already exist.
+        if (access(params->config_path, F_OK) == 0) {
+            printf("  %s already exists.\n", params->config_path);
+            continue;
         }
 
-        input[0] = '\0';
-        while (input[0] == '\0') {
-            create_prompt_password(input, sizeof(input), "Confirm MariaDB MyFS user password");
-            strlcpy(params->mariadb_password2, input, sizeof(params->mariadb_password2));
-        }
-
-        if (strcmp(params->mariadb_password1, params->mariadb_password2) != 0) {
-            printf("  Passwords do not match, try again.\n");
+        //Make sure the directory is writable.
+        util_dirname(params->config_path, dir, sizeof(dir));
+        if (access(dir, W_OK) != 0) {
+            printf("  %s is not writable: %s.\n", dir, strerror(errno));
             continue;
         }
 
         break;
     }
-    printf("  MariaDB user password accepted.\n");
 
-    create_prompt(input, sizeof(input), "MariaDB MyFS database[%s]", params->mariadb_database);
-    if (input[0] != '\0') {
-        strlcpy(params->mariadb_database, input, sizeof(params->mariadb_database));
-        printf("  MariaDB MyFS database changed to %s.\n", params->mariadb_database);
+    //Prompt the user for MariaDB credentials to create the database
+    while (true) {
+        printf("\n");
+        util_create_prompt(input, sizeof(input), "MariaDB host[%s]", params->mariadb_host);
+        if (input[0] != '\0') {
+            strlcpy(params->mariadb_host, input, sizeof(params->mariadb_host));
+            printf("  MariaDB host changed to %s.\n", params->mariadb_host);
+        }
+
+        printf("\n");
+        util_create_prompt(input, sizeof(input), "MariaDB port[%s]", params->mariadb_port);
+        if (input[0] != '\0') {
+            strlcpy(params->mariadb_port, input, sizeof(params->mariadb_port));
+            printf("  MariaDB port changed to %s.\n", params->mariadb_port);
+        }
+
+        printf("\n");
+        util_create_prompt(input, sizeof(input), "MariaDB super user[%s]", params->mariadb_user_root);
+        if (input[0] != '\0') {
+            strlcpy(params->mariadb_user_root, input, sizeof(params->mariadb_user_root));
+            printf("  MariaDB super user changed to %s.\n", params->mariadb_user_root);
+        }
+
+        params->mariadb_password_root[0] = '\0';
+        printf("\n");
+        while (params->mariadb_password_root[0] == '\0') {
+            util_create_prompt_password(input, sizeof(input), "MariaDB super user password");
+            strlcpy(params->mariadb_password_root, input, sizeof(params->mariadb_password_root));
+        }
+        printf("  MariaDB super user password accepted.\n");
+
+        printf("\n");
+        printf("Connecting to MariaDB at %s@%s:%s.\n", params->mariadb_user_root, params->mariadb_host, params->mariadb_port);
+        success = db_connect(&params->db, params->mariadb_host, params->mariadb_user_root, params->mariadb_password_root, NULL, strtoul(params->mariadb_port, NULL, 10));
+        if (!success) {
+            printf("  Error connecting to MariaDB: %s.\n", db_error(&params->db));
+            continue;
+        }
+
+        printf("  Connected.\n");
+        break;
+    }
+
+    while (true) {
+        //Ask if we need to create a special MariaDB user for the new database. It's perfectly fine to use an existing user.
+        params->create_database_user = false;
+        printf("\n");
+        util_create_prompt(input, sizeof(input), "Do you need to create a new MariaDB user for MyFS[y/n]?");
+        if (strcmp(input, "y") == 0) {
+            params->create_database_user = true;
+        }
+
+        printf("\n");
+        util_create_prompt(input, sizeof(input), "MariaDB MyFS user[%s]", params->mariadb_user);
+        if (input[0] != '\0') {
+            strlcpy(params->mariadb_user, input, sizeof(params->mariadb_user));
+            printf("  MariaDB MyFS user changed to %s.\n", params->mariadb_user);
+        }
+
+        printf("\n");
+        util_create_prompt(input, sizeof(input), "Host that you'll be connecting to MariaDB from[%s]", params->mariadb_user_host);
+        if (input[0] != '\0') {
+            strlcpy(params->mariadb_user_host, input, sizeof(params->mariadb_user_host));
+            printf("  MariaDB user host changed to '%s'", params->mariadb_user_host);
+        }
+
+        printf("\n");
+        printf("Checking to see if database user '%s'@'%s' exists.\n", params->mariadb_user, params->mariadb_user_host);
+
+        success = db_user_exists(&params->db, params->mariadb_user, params->mariadb_user_host, &exists);
+        if (!success) {
+            printf("  Error checking to see if database user exists: %s.\n", db_error(&params->db));
+            return false;
+        }
+
+        if (params->create_database_user) {
+            if (exists) {
+                printf("  That database user already exists.\n");
+                continue;
+            }
+
+            printf("  That database user does not exist.\n");
+        }
+        else {
+            if (!exists) {
+                printf("  That database user does not exist.\n");
+                continue;
+            }
+
+            printf("  That database user exists.\n");
+        }
+
+        break;
+    }
+
+    if (params->create_database_user) {
+        printf("\n");
+        while (true) {
+            input[0] = '\0';
+            while (input[0] == '\0') {
+                util_create_prompt_password(input, sizeof(input), "MariaDB MyFS user password");
+                strlcpy(params->mariadb_password1, input, sizeof(params->mariadb_password1));
+            }
+
+            input[0] = '\0';
+            while (input[0] == '\0') {
+                util_create_prompt_password(input, sizeof(input), "Confirm MariaDB MyFS user password");
+                strlcpy(params->mariadb_password2, input, sizeof(params->mariadb_password2));
+            }
+
+            if (strcmp(params->mariadb_password1, params->mariadb_password2) != 0) {
+                printf("  Passwords do not match, try again.\n");
+                continue;
+            }
+
+            break;
+        }
+        printf("  MariaDB user password accepted.\n");
+    }
+
+    printf("\n");
+    while (true) {
+        util_create_prompt(input, sizeof(input), "MariaDB MyFS database[%s]", params->mariadb_database);
+        if (input[0] != '\0') {
+            strlcpy(params->mariadb_database, input, sizeof(params->mariadb_database));
+            printf("  MariaDB MyFS database changed to %s.\n", params->mariadb_database);
+        }
+
+        printf("\n");
+        printf("Checking to see if database '%s' exists.\n", params->mariadb_database);
+        success = db_database_exists(&params->db, params->mariadb_database, &exists);
+        if (!success) {
+            printf("  Error checking to see if the database exists: %s.\n", db_error(&params->db));
+            return false;
+        }
+
+        if (exists) {
+            printf("  That database already exists.\n");
+            continue;
+        }
+
+        printf("  That database does not exist.\n");
+        break;
     }
 
     printf("\n");
@@ -175,72 +222,17 @@ create_run_prompt(create_params_t *params) {
 
     input[0] = '\0';
     while (input[0] == '\0') {
-        create_prompt(input, sizeof(input), "Do you wish to continue[y/n]?");
+        util_create_prompt(input, sizeof(input), "Do you wish to continue[y/n]?");
     }
 
     return strcmp(input, "y") == 0;
 }
 
 static bool
-create_run_validate(create_params_t *params) {
-    char dir[1024 - 128];
-    MYSQL_RES *res;
-    MYSQL_ROW row;
-    bool success;
-
-    printf("\n");
-    printf("Running validation checks.\n");
-    printf("Checking config file %s.\n", params->config_path);
-
-    util_dirname(params->config_path, dir, sizeof(dir));
-
-    if (access(dir, W_OK) != 0) {
-        printf("  %s is not writable: %s\n", dir, strerror(errno));
-        return false;
-    }
-
-    if (access(params->config_path, F_OK) == 0) {
-        printf("  %s already exists.\n", params->config_path);
-        return false;
-    }
-
-    printf("  Config file is good.\n");
-    printf("Connecting to MariaDB at %s@%s:%s.\n", params->mariadb_user_root, params->mariadb_host, params->mariadb_port);
-
-    success = db_connect(&params->db, params->mariadb_host, params->mariadb_user_root, params->mariadb_password_root, NULL, strtoul(params->mariadb_port, NULL, 10));
-    if (!success) {
-        printf("  Error connecting to MariaDB: %s.\n", db_error(&params->db));
-        return false;
-    }
-
-    printf("  MariaDB connection is good.\n");
-    printf("Checking to make sure database '%s' does not exist.\n", params->mariadb_database);
-
-    res = db_selectf(&params->db, "SHOW DATABASES LIKE '%s'\n",
-                                  params->mariadb_database);
-    if (res == NULL) {
-        printf("  Error checking database: %s\n", db_error(&params->db));
-        return false;
-    }
-
-    row = mysql_fetch_row(res);
-    if (row != NULL) {
-        printf("  That database already exists.\n");
-        success = false;
-    }
-    else {
-        printf("  The database does not exist.\n");
-        success = true;
-    }
-
-    mysql_free_result(res);
-    return success;
-}
-
-static bool
 create_run_create_config(create_params_t *params) {
     FILE *f;
 
+    printf("\n");
     printf("Creating %s\n", params->config_path);
 
     f = fopen(params->config_path, "w");
@@ -283,6 +275,7 @@ static bool
 create_run_create_database(create_params_t *params) {
     bool success;
 
+    printf("\n");
     printf("Creating database '%s'\n", params->mariadb_database);
 
     //Create the database.
@@ -325,22 +318,25 @@ create_run_create_database(create_params_t *params) {
     }
 
     //Create the users.
-    printf("Creating database user '%s'\n", params->mariadb_user);
+    if (params->create_database_user) {
+        printf("Creating database user '%s'\n", params->mariadb_user);
 
-    success = db_queryf(&params->db, "CREATE USER '%s'@'%s' IDENTIFIED BY '%s'", params->mariadb_user, params->mariadb_host, params->mariadb_password1);
-    if (!success) {
-        printf("  Error creating user '%s': %s\n", params->mariadb_user, db_error(&params->db));
-        return false;
+        success = db_queryf(&params->db, "CREATE USER '%s'@'%s' IDENTIFIED BY '%s'", params->mariadb_user, params->mariadb_user_host, params->mariadb_password1);
+        if (!success) {
+            printf("  Error creating user '%s': %s\n", params->mariadb_user, db_error(&params->db));
+            return false;
+        }
     }
 
-    //TODO: need the IP of where its connecting from
-    success = db_queryf(&params->db, "GRANT USAGE ON `%s`.* TO '%s'@'%s'", params->mariadb_database, params->mariadb_user, params->mariadb_host);
+    printf("Granting privileges to database user '%s'\n", params->mariadb_user);
+
+    success = db_queryf(&params->db, "GRANT USAGE ON `%s`.* TO '%s'@'%s'", params->mariadb_database, params->mariadb_user, params->mariadb_user_host);
     if (!success) {
         printf("  Error granting usage to user '%s': %s\n", params->mariadb_user, db_error(&params->db));
         return false;
     }
 
-    success = db_queryf(&params->db, "GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'%s' WITH GRANT OPTION", params->mariadb_database, params->mariadb_user, params->mariadb_host);
+    success = db_queryf(&params->db, "GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'%s' WITH GRANT OPTION", params->mariadb_database, params->mariadb_user, params->mariadb_user_host);
     if (!success) {
         printf("  Error granting privileges to user '%s': %s\n", params->mariadb_user, db_error(&params->db));
         return false;
@@ -385,17 +381,18 @@ create_run() {
     strcpy(params.mariadb_host, config_get("mariadb_host"));
     strcpy(params.mariadb_user_root, "root");
     strcpy(params.mariadb_user, config_get("mariadb_user"));
+    strcpy(params.mariadb_user_host, "%");
     strcpy(params.mariadb_database, config_get("mariadb_database"));
     strcpy(params.mariadb_port, config_get("mariadb_port"));
 
     success = create_run_prompt(&params) &&
-              create_run_validate(&params) &&
               create_run_create_config(&params) &&
               create_run_create_database(&params);
 
     create_cleanup(&params, success);
 
     if (success) {
-        printf("Config file and database installed!\n");
+        printf("\n");
+        printf("MyFS has been setup.\n");
     }
 }

@@ -1,5 +1,10 @@
 #include <stdlib.h>
+#include <stdio.h>
+#include <stdarg.h>
+#include <stdbool.h>
+#include <unistd.h>
 #include <libgen.h>
+#include <termios.h>
 #include "../common/string.h"
 #include "util.h"
 
@@ -39,4 +44,56 @@ util_dirname(const char *path, char *dst, size_t size) {
     free(path_dupe);
 
     return dst;
+}
+
+static void
+util_create_prompt_helper(char *dst, int size, const char *fmt, va_list ap, bool no_echo) {
+    struct termios t;
+    char *ptr;
+
+    vprintf(fmt, ap);
+
+    printf(": ");
+    fflush(stdout);
+
+    //Turn off echo'ing to the console if needed.
+    if (no_echo) {
+        tcgetattr(STDIN_FILENO, &t);
+        t.c_lflag &= ~ECHO;
+        tcsetattr(STDIN_FILENO, TCSANOW, &t);
+    }
+
+    fgets(dst, size, stdin);
+
+    //Turn back on echo'ing to the console if needed.
+    if (no_echo) {
+        tcgetattr(STDIN_FILENO, &t);
+        t.c_lflag |= ECHO;
+        tcsetattr(STDIN_FILENO, TCSANOW, &t);
+        printf("\n");
+    }
+
+    //Remove the newline.
+    ptr = strchr(dst, '\n');
+    if (ptr != NULL) {
+        *ptr = '\0';
+    }
+}
+
+void
+util_create_prompt(char *dst, int size, const char *fmt, ...) {
+    va_list ap;
+
+    va_start(ap, fmt);
+    util_create_prompt_helper(dst, size, fmt, ap, false);
+    va_end(ap);
+}
+
+void
+util_create_prompt_password(char *dst, int size, const char *fmt, ...) {
+    va_list ap;
+
+    va_start(ap, fmt);
+    util_create_prompt_helper(dst, size, fmt, ap, true);
+    va_end(ap);
 }

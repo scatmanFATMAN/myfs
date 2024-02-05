@@ -85,6 +85,29 @@ MYSQL_RES * db_select(db_t *db, const char *query, int len);
 MYSQL_RES * db_selectf(db_t *db, const char *fmt, ...);
 
 /**
+ * Determines if the database exists.
+ *
+ * @param[in] db The database context.
+ * @param[in] name The name of the database.
+ * @param[out] exists Set to `true` if the database exists, otherwise `false`.
+ * @return `true` if the query success, or `false` if there was a query error. If `false` is returned,
+ *         you cannot depend on the value of `exists`.
+ */
+bool db_database_exists(db_t *db, const char *name, bool *exists);
+
+/**
+ * Determines if the database user for the given host exists.
+ *
+ * @param[in] db The database context.
+ * @param[in] user The name of the user.
+ * @param[in] host The host for the user.
+ * @param[out] exists Set to `true` if the user exists, otherwise `false`.
+ * @return `true` if the query success, or `false` if there was a query error. If `false` is returned,
+ *         you cannot depend on the value of `exists`.
+ */
+bool db_user_exists(db_t *db, const char *user, const char *host, bool *exists);
+
+/**
  * Escapes a string that's safe to use in queries. The string must be free'd after use.
  *
  * @param[in] db The database context.

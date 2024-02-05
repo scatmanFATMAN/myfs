@@ -103,6 +103,46 @@ db_selectf(db_t *db, const char *fmt, ...) {
     return res;
 }
 
+bool
+db_database_exists(db_t *db, const char *name, bool *exists) {
+    MYSQL_RES *res;
+    MYSQL_ROW row;
+
+    res = db_selectf(db, "SHOW DATABASES LIKE '%s'",
+                         name);
+    if (res == NULL) {
+        return false;
+    }
+
+    row = mysql_fetch_row(res);
+    *exists = row != NULL;
+    mysql_free_result(res);
+
+    return true;
+}
+
+bool
+db_user_exists(db_t *db, const char *user, const char *host, bool *exists) {
+    MYSQL_RES *res;
+    MYSQL_ROW row;
+
+    res = db_selectf(db, "SELECT COUNT(*)\n"
+                         "FROM `mysql`.`user`\n"
+                         "WHERE `User`='%s'\n"
+                         "AND `Host`='%s'",
+                         user, host);
+
+    if (res == NULL) {
+        return false;
+    }
+
+    row = mysql_fetch_row(res);
+    *exists = strtoul(row[0], NULL, 10) > 0;
+    mysql_free_result(res);
+
+    return true;
+}
+
 char *
 db_escape(db_t *db, const char *str, unsigned int *length) {
     char *escaped;
