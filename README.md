@@ -15,14 +15,19 @@ This can almost be thought of as an NFS file system, where multiple clients can 
 MyFS currently only works on Linux and runs as whatever user/group started the file system. Files inherit MyFS's user/group with 0600 permissions while directories also inherit MyFS's user/group but with 0700 permissions.
 
 ## How to use it
-TODO!
-Everything needed to use MyFS is already in the repository (I think) but will mature and become easier to install. For now, see below:
-+ The config file in ```etc/myfs.d/myfs.conf``` from this repository goes into ```/etc/myfs.d/myfs.conf``` on the file system.
-+ Create the MariaDB database using the SQL file in ```etc/create.sql``` from this repositoy (don't forget to edit the file and set a password).
-+ Update the config in ```/etc/myfs.d/myfs.conf``` with the proper MariaDB configurations.
-+ Create a mount point ```mkdir /mnt/myfs```.
-+ Compile myfs ```cd src && sudo make install```.
-+ Run MyFS ```/usr/local/bin/myfs -f /mnt/myfs```.
+There are two ways to setup MyFS.
+1) Assisted Setup
+  
+    + You can use ```myfs --create true``` to have MyFS prompt you for setup configurations. It will install the configuration file and create the database and user automatically for you.
+    + Run ```myfs --config-file <path-to-config-file>```
+  
+2) Manual Setup
+   
+  + The config file in ```etc/myfs.d/myfs.conf``` from this repository goes into ```/etc/myfs.d/myfs.conf``` on the file system. Update the configuration file with your configuration. You may rename it to whatever you want.
+  + Create the MariaDB database and user.
+    + Run ```myfs --print-create-sql``` to get the SQL statements needed to run.
+  + Create the mount point.
+  + Run ```myfs --config-file <path-to-config-file>```
 
 ## Features and Dreams (Maybe Some Hopes)
 - [x] Core code, configuration, integrating FUSE and MariaDB.
