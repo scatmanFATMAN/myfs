@@ -143,6 +143,31 @@ db_user_exists(db_t *db, const char *user, const char *host, bool *exists) {
     return true;
 }
 
+bool
+db_transaction_start(db_t *db) {
+    return db_queryf(db, "START TRANSACTION");
+}
+
+bool
+db_transaction_stop(db_t *db, bool commit) {
+    my_bool success;
+
+    if (commit) {
+        success = mysql_commit(&db->mysql);
+        if (success != 0) {
+            snprintf(db->error, sizeof(db->error), "Commit: %s", mysql_error(&db->mysql));
+        }
+    }
+    else {
+        success = mysql_rollback(&db->mysql);
+        if (success != 0) {
+            snprintf(db->error, sizeof(db->error), "Rollback: %s", mysql_error(&db->mysql));
+        }
+    }
+
+    return success == 0;
+}
+
 char *
 db_escape(db_t *db, const char *str, unsigned int *length) {
     char *escaped;

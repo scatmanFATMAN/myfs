@@ -107,6 +107,33 @@ myfs_file_get(myfs_t *myfs, const char *path, bool include_children) {
     return file;
 }
 
+/**
+ * Queries MariaDB to determine if the given file exists.
+ *
+ * @param[in] myfs THe MyFS context.
+ * @param[in] path The path to the MyFS file.
+ * @param[out] exists Set to `true` if the file exists, otherwise `false`.
+ * @return `true` if the query succeeded, otherwise false.
+ */
+static bool
+myfs_file_exists(myfs_t *myfs, const char *path, bool *exists) {
+    myfs_file_t *file;
+
+    //TODO: handle query error vs exists!
+
+    file = myfs_file_get(myfs, path, false);
+
+    if (file == NULL) {
+        *exists = false;
+    }
+    else {
+        *exists = true;
+        myfs_file_free(file);
+    }
+
+    return true;
+}
+
 bool
 myfs_connect(myfs_t *myfs) {
     bool success;
@@ -691,53 +718,119 @@ myfs_write(const char *path, const char *buffer, size_t size, off_t offset, stru
     return size;
 }
 
+static int
+myfs_rename_swap(myfs_t *myfs, const char *path_old, const char *path_new) {
+    myfs_file_t *file_old = NULL, *file_new = NULL;
+    bool success;
+    int ret = 0;
+
+    file_old = myfs_file_get(myfs, path_old, false);
+    if (file_old == NULL) {
+        ret = -ENOENT;
+        goto done;
+    }
+
+    file_new = myfs_file_get(myfs, path_new, false);
+    if (file_new == NULL) {
+        ret = -ENOENT;
+        goto done;
+    }
+
+    success = myfs_db_file_swap(myfs, file_old, file_new);
+    if (!success) {
+        ret = -EIO;
+        goto done;
+    }
+
+done:
+    if (file_old != NULL) {
+        myfs_file_free(file_old);
+    }
+    if (file_new != NULL) {
+        myfs_file_free(file_new);
+    }
+
+    return ret;
+}
+
+static int
+myfs_rename_move(myfs_t *myfs, const char *path_old, const char *path_new) {
+    char path_name_new[MYFS_FILE_NAME_MAX_LEN + 1];
+    char path_dir_new[MYFS_PATH_NAME_MAX_LEN + 1];
+    myfs_file_t *file_old = NULL, *file_new = NULL;
+    myfs_file_t *file_dir_old = NULL, *file_dir_new = NULL;
+    bool success, exists;
+    int ret = 0;
+
+    util_dirname(path_new, path_dir_new, sizeof(path_dir_new));
+    util_basename(path_new, path_name_new, sizeof(path_name_new));
+
+    //Make sure the new file doesn't already exists (RENAME_NOREPLACE)
+    success = myfs_file_exists(myfs, path_name_new, &exists);
+    if (exists) {
+        ret = -EEXIST;
+        goto done;
+    }
+
+    //Get the old file.
+    file_old = myfs_file_get(myfs, path_old, false);
+    if (file_old == NULL) {
+        ret = -ENOENT;
+        goto done;
+    }
+
+    //Get the file for the directory.
+    file_dir_new = myfs_file_get(myfs, path_dir_new, false);
+    if (file_dir_new == NULL) {
+        ret = -ENOENT;
+        goto done;
+    }
+
+    success = myfs_db_file_rename(myfs, file_old->file_id, file_dir_new->file_id, path_name_new);
+    if (!success) {
+        ret = -EIO;
+        goto done;
+    }
+
+done:
+    if (file_old != NULL) {
+        myfs_file_free(file_old);
+    }
+    if (file_new != NULL) {
+        myfs_file_free(file_new);
+    }
+    if (file_dir_old != NULL) {
+        myfs_file_free(file_dir_old);
+    }
+    if (file_dir_new != NULL) {
+        myfs_file_free(file_dir_new);
+    }
+
+    return ret;
+}
+
 int
 myfs_rename(const char *path_old, const char *path_new, unsigned int flags) {
-    char path_new_dir[MYFS_PATH_NAME_MAX_LEN + 1], name_new[MYFS_FILE_NAME_MAX_LEN + 1];
-    myfs_file_t *file, *dir;
     myfs_t *myfs;
-    bool success;
+    int ret;
 
     MYFS_LOG_TRACE("Begin; OldPath[%s]; NewPath[%s]; Flags[%u]", path_old, path_new, flags);
 
     myfs = (myfs_t *)fuse_get_context()->private_data;
 
-    //Get the directoy and name of the new path name.
-    util_dirname(path_new, path_new_dir, sizeof(path_new_dir));
-    util_basename(path_new, name_new, sizeof(name_new));
-
-    //Get the old file.
-    file = myfs_file_get(myfs, path_old, false);
-    if (file == NULL) {
-        return -ENOENT;
-    }
-
-    printf("  %d %d\n", RENAME_EXCHANGE, RENAME_NOREPLACE);
     if (flags == RENAME_EXCHANGE) {
-        printf("EXCHANGE\n");
+        ret = myfs_rename_swap(myfs, path_old, path_new);
     }
-    if (flags == RENAME_NOREPLACE) {
-        printf("NOREPLACE\n");
+    else if (flags == RENAME_NOREPLACE) {
+        ret = myfs_rename_move(myfs, path_old, path_new);
     }
-
-    //Get the file for the directory.
-    dir = myfs_file_get(myfs, path_new_dir, false);
-    if (dir == NULL) {
-        myfs_file_free(file);
-        return -ENOENT;
-    }
-
-    success = myfs_db_file_rename(myfs, file->file_id, dir->file_id, name_new);
-    myfs_file_free(file);
-    myfs_file_free(dir);
-
-    if (!success) {
-        return -EIO;
+    else {
+        ret = -EINVAL;
     }
 
     MYFS_LOG_TRACE("End");
 
-    return 0;
+    return ret;
 }
 
 int

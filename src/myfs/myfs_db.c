@@ -72,6 +72,54 @@ myfs_db_file_set_times(myfs_t *myfs, unsigned int file_id, time_t last_accessed_
 }
 
 bool
+myfs_db_file_swap(myfs_t *myfs, myfs_file_t *file1, myfs_file_t *file2) {
+    unsigned int parent1_id = 0, parent2_id = 0;
+    bool success;
+
+    if (file1->parent != NULL) {
+        parent1_id = file1->parent->file_id;
+    }
+    if (file2->parent != NULL) {
+        parent2_id = file2->parent->file_id;
+    }
+
+    //Start a transaction since this must be done atomically.
+    success = db_transaction_start(&myfs->db);
+    if (!success) {
+        return false;
+    }
+
+    //Update the first file.
+    success = db_queryf(&myfs->db, "UPDATE `files`\n"
+                                   "SET `parent_id`=%u\n"
+                                   "WHERE `file_id`=%u",
+                                   parent2_id,
+                                   file1->file_id);
+
+    if (!success) {
+        log_err(MODULE, "Error swaping file File ID %u with File ID %u (first update): %s", file1->file_id, file2->file_id, db_error(&myfs->db));
+    }
+
+    //Update the second file.
+    if (success) {
+        success = db_queryf(&myfs->db, "UPDATE `files`\n"
+                                       "SET `parent_id`=%u\n"
+                                       "WHERE `file_id`=%u",
+                                       parent1_id,
+                                       file2->file_id);
+
+        if (!success) {
+            log_err(MODULE, "Error swaping file File ID %u with File ID %u (second update): %s", file1->file_id, file2->file_id, db_error(&myfs->db));
+        }
+    }
+
+    //Commit or rollback the transaction.
+    db_transaction_stop(&myfs->db, success);
+
+    return success;
+}
+
+bool
 myfs_db_file_rename(myfs_t *myfs, unsigned int file_id, unsigned int parent_id, const char *name) {
     char *name_esc;
     bool success;

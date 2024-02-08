@@ -108,6 +108,23 @@ bool db_database_exists(db_t *db, const char *name, bool *exists);
 bool db_user_exists(db_t *db, const char *user, const char *host, bool *exists);
 
 /**
+ * Starts a MariaDB transaction.
+ *
+ * @param[in] db The database context.
+ * @return `true` if the transaction was started, otherwise `false`.
+ */
+bool db_transaction_start(db_t *db);
+
+/**
+ * Commits or rolls back a MariaDB transaction based on `commit`.
+ *
+ * @param[in] db The database context.
+ * @param[in[ commit `true` to commit the transaction, `false` to roll it back.
+ * @return `true` if the operation was successful, otherwise `false`.
+ */
+bool db_transaction_stop(db_t *db, bool commit);
+
+/**
  * Escapes a string that's safe to use in queries. The string must be free'd after use.
  *
  * @param[in] db The database context.

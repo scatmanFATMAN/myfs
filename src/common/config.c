@@ -137,6 +137,15 @@ config_set_default(const char *name, const char *name_command_line, const char *
 }
 
 void
+config_set_default_int(const char *name, const char *name_command_line, const char *name_config_file, int value_default, config_func_t func, const char *help) {
+    char default_value_str[16];
+
+    snprintf(default_value_str, sizeof(default_value_str), "%d", value_default);
+
+    config_set_default(name, name_command_line, name_config_file, default_value_str, func, help);
+}
+
+void
 config_set_default_bool(const char *name, const char *name_command_line, const char *name_config_file, bool value_default, config_func_t func, const char *help) {
     char default_value_str[8];
 
@@ -216,15 +225,15 @@ config_print_help() {
     }
 
     fprintf(stderr, "-----------------------------------------------------------------------------------------------------------------------------------\n");
-    fprintf(stderr, "%-25s%-25s%-25s%-25s%-20s\n", "Name", "Command Line", "Config File", "Default Value", "Help");
+    fprintf(stderr, "%-30s%-30s%-30s%-30s%-20s\n", "Name", "Command Line", "Config File", "Default Value", "Help");
     fprintf(stderr, "-----------------------------------------------------------------------------------------------------------------------------------\n");
 
     config = configs;
     while (config != NULL) {
-        fprintf(stderr, "%-25s", config->name);
-        fprintf(stderr, "%-25s", config->name_command_line != NULL ? config->name_command_line : "");
-        fprintf(stderr, "%-25s", config->name_config_file != NULL ? config->name_config_file : "");
-        fprintf(stderr, "%-25s", config->value_default != NULL ? config->value_default : "");
+        fprintf(stderr, "%-30s", config->name);
+        fprintf(stderr, "%-30s", config->name_command_line != NULL ? config->name_command_line : "");
+        fprintf(stderr, "%-30s", config->name_config_file != NULL ? config->name_config_file : "");
+        fprintf(stderr, "%-30s", config->value_default != NULL ? config->value_default : "");
         fprintf(stderr, "%-20s", config->help);
         fprintf(stderr, "\n");
         config = config->next;
@@ -326,17 +335,22 @@ config_read_command_line(int argc, char **argv, bool priority) {
         found = false;
         config = configs;
         while (config != NULL) {
-            if (config->name_command_line != NULL && strcmp(argv[i], config->name_command_line) == 0 && ((priority && config->priority) || (!priority && !config->priority))) {
+            if (config->name_command_line != NULL && strcmp(argv[i], config->name_command_line) == 0) {
                 found = true;
 
-                //If there's a user defined function, call that instead.
-                if (config->func != NULL) {
-                    if (!config->func(config->name, argv[i + 1])) {
-                        return false;
+                //Only process the config if the priorities match.
+                //If this call is only looking for high priority configs, then only process the config if it's high priority.
+                //If this call is only looking for low priority configs, then only process the config if it's low priority.
+                if ((priority && config->priority) || (!priority && !config->priority)) {
+                    //If there's a user defined function, call that instead.
+                    if (config->func != NULL) {
+                        if (!config->func(config->name, argv[i + 1])) {
+                            return false;
+                        }
                     }
-                }
-                else {
-                    config_set(config->name, argv[i + 1]);
+                    else {
+                        config_set(config->name, argv[i + 1]);
+                    }
                 }
 
                 break;
@@ -421,6 +435,15 @@ config_dupe(const char *name) {
     value = config_get(name);
 
     return value == NULL ? NULL : strdup(value);
+}
+
+int
+config_get_int(const char *name) {
+    const char *value;
+
+    value = config_get(name);
+
+    return value == NULL ? 0 : atoi(value);
 }
 
 unsigned int

@@ -29,16 +29,23 @@ config_handle_print_create_sql(const char *name, const char *value) {
 
     create_get_sql_database(sql, sizeof(sql), "<myfs_database>");
     printf("%s\n", sql);
+    printf("\n");
     printf("USE `%s`;\n", "<myfs_database>");
+    printf("\n");
     create_get_sql_database_table(sql, sizeof(sql));
     printf("%s\n", sql);
+    printf("\n");
     create_get_sql_database_user_create(sql, sizeof(sql), "<myfs_user>", "<myfs_user_host>", "<myfs_user_password>");
     printf("%s\n", sql);
+    printf("\n");
     create_get_sql_database_user_grant1(sql, sizeof(sql), "<myfs_user>", "<myfs_user_host>", "<myfs_database>");
     printf("%s\n", sql);
+    printf("\n");
     create_get_sql_database_user_grant2(sql, sizeof(sql), "<myfs_user>", "<myfs_user_host>", "<myfs_database>");
     printf("%s\n", sql);
+    printf("\n");
     printf("FLUSH PRIVILEGES;\n");
+    printf("\n");
 
     return false;
 }
@@ -89,17 +96,19 @@ main(int argc, char **argv) {
     config_set_description("%s v%d.%d.%d", VERSION_NAME, VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH);
 
     //Set default config options.
-    config_set_default("config_file",           "--config-file",      NULL,               "/etc/myfs.d/myfs.conf",   NULL,                            "The MariaDB database name.");
-    config_set_default_bool("create",           "--create",           NULL,               false,                     config_handle_create,            "Runs the process to create a new MyFS database and exits.");
-    config_set_default_bool("log_stdout",       "--log-stdout",       "log_stdout",       true,                      config_handle_log_stdout,        "Whether or not to log to stdout.");
-    config_set_default_bool("log_syslog",       "--log-syslog",       "log_syslog",       false,                     config_handle_log_syslog,        "Whether or not to log to syslog.");
-    config_set_default("mariadb_database",      "--mariadb-database", "mariadb_database", "myfs",                    NULL,                            "The MariaDB database name.");
-    config_set_default("mariadb_host",          "--mariadb-host",     "mariadb_host",     "127.0.0.1",               NULL,                            "The MariaDB IP address or hostname.");
-    config_set_default("mariadb_password",      "--mariadb-password", "mariadb_password", NULL,                      NULL,                            "The MariaDB user's password.");
-    config_set_default("mariadb_port",          "--mariadb-port",     "mariadb_port",     "3306",                    NULL,                            "The MariaDB port.");
-    config_set_default("mariadb_user",          "--mariadb-user",     "mariadb_user",     "myfs",                    NULL,                            "The MariaDB user.");
-    config_set_default("mount",                 "--mount",            "mount",            "/mnt/myfs",               NULL,                            "The mount point for the file system.");
-    config_set_default_bool("print_create_sql", "--print-create-sql", NULL,               false,                     config_handle_print_create_sql,  "Prints the SQL statements needed to create a MyFS database and exits.");
+    config_set_default("config_file",                   "--config-file",                NULL,                        "/etc/myfs.d/myfs.conf",   NULL,                            "The MariaDB database name.");
+    config_set_default_bool("create",                   "--create",                     NULL,                        false,                     config_handle_create,            "Runs the process to create a new MyFS database and exits.");
+    config_set_default_int("failed_query_retry_wait",   "--failed-query-retry-wait",    "failed_query_retry_wait",   -1,                        NULL,                            "Number of seconds to wait before re-trying a failed query. -1 means do not retry.");
+    config_set_default_int("failed_query_retry_count",  "--failed-query-retry-count",   "failed_query_retry_count",  -1,                        NULL,                            "The total number of failed queries to retry. -1 means do not retry. 0 means retry forever.");
+    config_set_default_bool("log_stdout",               "--log-stdout",                 "log_stdout",                true,                      config_handle_log_stdout,        "Whether or not to log to stdout.");
+    config_set_default_bool("log_syslog",               "--log-syslog",                 "log_syslog",                false,                     config_handle_log_syslog,        "Whether or not to log to syslog.");
+    config_set_default("mariadb_database",              "--mariadb-database",           "mariadb_database",          "myfs",                    NULL,                            "The MariaDB database name.");
+    config_set_default("mariadb_host",                  "--mariadb-host",               "mariadb_host",              "127.0.0.1",               NULL,                            "The MariaDB IP address or hostname.");
+    config_set_default("mariadb_password",              "--mariadb-password",           "mariadb_password",          NULL,                      NULL,                            "The MariaDB user's password.");
+    config_set_default("mariadb_port",                  "--mariadb-port",               "mariadb_port",              "3306",                    NULL,                            "The MariaDB port.");
+    config_set_default("mariadb_user",                  "--mariadb-user",               "mariadb_user",              "myfs",                    NULL,                            "The MariaDB user.");
+    config_set_default("mount",                         "--mount",                      "mount",                     "/mnt/myfs",               NULL,                            "The mount point for the file system.");
+    config_set_default_bool("print_create_sql",         "--print-create-sql",           NULL,                        false,                     config_handle_print_create_sql,  "Prints the SQL statements needed to create a MyFS database and exits.");
 
     //These command line configs should be parsed before the config file.
     config_set_priority("config_file");

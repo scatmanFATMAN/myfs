@@ -54,10 +54,9 @@ There are two ways to setup MyFS.
       - [x] Create
       - [x] Delete
       - [x] Read
-- [ ]  Advanced and configurable logging to syslog or other interfaces.
+- [x]  Advanced and configurable logging to syslog or other interfaces.
 - [ ]  Handle MariaDB query failures/retries. Block forever like NFS? This is important.
-- [ ]  Command line switch or application to setup the initial database.
-- [ ]  Finalize configuration file locations and how they're read.
+- [x]  Command line switch or application to setup the initial database.
 - [ ]  Create RPM and Deb packages.
 - [ ]  Support and test more configuration.
 

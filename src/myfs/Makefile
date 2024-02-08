@@ -12,12 +12,12 @@ obj=$(common)/config.o \
 	util.o
 
 cc=gcc
-cflags=`mariadb_config --cflags` `pkg-config fuse3 --cflags` -D_GNU_SOURCE -Wall -Wsign-compare -fsanitize=address,undefined -g
-libs=`mariadb_config --libs` `pkg-config fuse3 --libs` -fsanitize=address,undefined
+cflags=`mariadb_config --cflags` `pkg-config fuse3 --cflags` -D_GNU_SOURCE -Wall -Wsign-compare -g2
+libs=`mariadb_config --libs` `pkg-config fuse3 --libs`
 
 all: $(app)
 
-release: cflags:=$(filter-out -g, $(cflags)) -O2
+release: cflags:=$(filter-out -g2, $(cflags)) -O2
 release: $(app)
 
 $(app): $(obj)

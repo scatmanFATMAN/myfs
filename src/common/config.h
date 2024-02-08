@@ -62,6 +62,20 @@ void config_set_description(const char *fmt, ...);
 void config_set_default(const char *name, const char *name_command_line, const char *name_config_file, const char *value_default, config_func_t func, const char *help);
 
 /**
+ * Sets the default int value for a config parameter referenced by `name`. This function
+ * should be called once for every possible config parameter before config_read() is
+ * called.
+ *
+ * @param[in] name The name of the parameter.
+ * @param[in] name_command_line The command line switch or NULL to ignore.
+ * @param[in] name_config_file The config file name or NULL to ignore.
+ * @param[in] value_default The default value for this parameter.
+ * @param[in] func A callback function used to set the parameter.
+ * @param[in] help Help text to display if --help is used.
+ */
+void config_set_default_int(const char *name, const char *name_command_line, const char *name_config_file, int value_default, config_func_t func, const char *help);
+
+/**
  * Sets the default boolean value for a config parameter referenced by `name`. This function
  * should be called once for every possible config parameter before config_read() is
  * called.
@@ -166,6 +180,13 @@ const char * config_get(const char *name);
  */
 char * config_dupe(const char *name);
 
+/**
+ * Gets the value of a config parameter as an int. If not found, 0 is returned.
+ *
+ * @param[in] name The name of the parameter.
+ * @return The value of of the parameter or 0 if not found.
+ */
+int config_get_int(const char *name);
 
 /**
  * Gets the value of a config parameter as an unsigned int. If not found, 0 is returned.
@@ -173,5 +194,4 @@ char * config_dupe(const char *name);
  * @param[in] name The name of the parameter.
  * @return The value of of the parameter or 0 if not found.
  */
-
 unsigned int config_get_uint(const char *name);

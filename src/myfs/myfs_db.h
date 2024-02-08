@@ -43,6 +43,16 @@ bool myfs_db_file_delete(myfs_t *myfs, unsigned int file_id);
 bool myfs_db_file_set_times(myfs_t *myfs, unsigned int file_id, time_t last_accessed_on, time_t last_modified_on);
 
 /**
+ * Swaps two files atomically.
+ *
+ * @param[in] myfs The MyFS context.
+ * @param[in] file1 The first file to swap.
+ * @param[in] file2 The second file to swap.
+ * @return `true` if the files were swaped, otherwise `false`.
+ */
+bool myfs_db_file_swap(myfs_t *myfs, myfs_file_t *file1, myfs_file_t *file2);
+
+/**
  * Updates both the parent and the name of a file (moves/renames it).
  *
  * @param[in] myfs The MyFS context.
