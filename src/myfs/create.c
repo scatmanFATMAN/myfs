@@ -22,6 +22,8 @@ typedef struct {
     char mariadb_database[128];
     char mariadb_port[8];
     char mount[1024];
+    char user[MYFS_USER_NAME_MAX_LEN + 1];
+    char group[MYFS_USER_NAME_MAX_LEN + 1];
     db_t db;
     bool create_database_user;
     bool config_created;
@@ -65,6 +67,40 @@ create_run_prompt(create_params_t *params) {
         util_dirname(params->config_path, dir, sizeof(dir));
         if (access(dir, W_OK) != 0) {
             printf("  %s is not writable: %s.\n", dir, strerror(errno));
+            continue;
+        }
+
+        break;
+    }
+
+    //Prompt for and check the Linux user.
+    while (true) {
+        printf("\n");
+        util_create_prompt(input, sizeof(input), "User to create files as [%s]", params->user);
+        if (input[0] != '\0') {
+            strlcpy(params->user, input, sizeof(params->user));
+            printf("  User changed to '%s'.\n", params->user);
+        }
+
+        if (!util_user_exists(params->user)) {
+            printf("  User '%s' does not exist.\n", params->user);
+            continue;
+        }
+
+        break;
+    }
+
+    //Prompt for and check the Linux group.
+    while (true) {
+        printf("\n");
+        util_create_prompt(input, sizeof(input), "Group to create files as [%s]", params->group);
+        if (input[0] != '\0') {
+            strlcpy(params->group, input, sizeof(params->group));
+            printf("  Group changed to '%s'.\n", params->group);
+        }
+
+        if (!util_group_exists(params->group)) {
+            printf("  Group '%s' does not exist.\n", params->group);
             continue;
         }
 
@@ -375,6 +411,20 @@ create_run_create_database(create_params_t *params) {
         return false;
     }
 
+    create_get_sql_database_insert1(sql, sizeof(sql));
+    success = db_queryf(&params->db, "%s", sql);
+    if (!success) {
+        printf("  Error setting sql_mode: %s\n", db_error(&params->db));
+        return false;
+    }
+
+    create_get_sql_database_insert2(sql, sizeof(sql), params->user, params->group);
+    success = db_queryf(&params->db, "%s", sql);
+    if (!success) {
+        printf("  Error inserting root directory: %s\n", db_error(&params->db));
+        return false;
+    }
+
     success = db_queryf(&params->db, "FLUSH PRIVILEGES");
     if (!success) {
         printf("  Error flushing privileges: %s\n", db_error(&params->db));
@@ -418,6 +468,8 @@ create_run() {
     strcpy(params.mariadb_database, config_get("mariadb_database"));
     strcpy(params.mariadb_port, config_get("mariadb_port"));
     strcpy(params.mount, config_get("mount"));
+    util_username(getuid(), params.user, sizeof(params.user));
+    util_groupname(getgid(), params.group, sizeof(params.group));
 
     success = create_run_prompt(&params) &&
               create_run_create_config(&params) &&
@@ -473,4 +525,16 @@ create_get_sql_database_user_grant1(char *dst, size_t size, const char *user, co
 void
 create_get_sql_database_user_grant2(char *dst, size_t size, const char *user, const char *host, const char *database) {
     snprintf(dst, size, "GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'%s' WITH GRANT OPTION;", database, user, host);
+}
+
+void
+create_get_sql_database_insert1(char *dst, size_t size) {
+    strlcpy(dst, "SET SESSION sql_mode=CONCAT(@@SESSION.sql_mode,',','NO_AUTO_VALUE_ON_ZERO');", size);
+}
+
+void
+create_get_sql_database_insert2(char *dst, size_t size, const char *user, const char *group) {
+    snprintf(dst, size, "INSERT INTO `files` (`file_id`,`parent_id`,`name`,`type`,`user`,`group`,`mode`,`content`,`created_on`,`last_accessed_on`,`last_modified_on`,`last_status_changed_on`)\n"
+                        "VALUES (0,0,'','Directory','%s','%s',16893,'',UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP());",
+                        user, group);
 }

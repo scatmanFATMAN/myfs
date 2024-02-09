@@ -43,6 +43,14 @@ int util_username(uid_t uid, char *dst, size_t size);
 int util_user_id(const char *name, uid_t *uid);
 
 /**
+ * Determines if a Linux user exists by name.
+ *
+ * @param[in] name The name of the user.
+ * @return `true` is the user exists, otherwise `false`.
+ */
+bool util_user_exists(const char *name);
+
+/**
  * Looks up a Linux group by its ID and copies its name into a buffer.
  *
  * @param[in] gid The Group ID of the group.
@@ -60,6 +68,14 @@ int util_groupname(gid_t gid, char *dst, size_t size);
  * @return 0 on success, or an errno otherwise.
  */
 int util_group_id(const char *name, gid_t *gid);
+
+/**
+ * Determines if a Linux group exists by name.
+ *
+ * @param[in] name The name of the group.
+ * @return `true` is the group exists, otherwise `false`.
+ */
+bool util_group_exists(const char *name);
 
 /**
  * Creates a prompt using the format string `fmt` and captures user input into

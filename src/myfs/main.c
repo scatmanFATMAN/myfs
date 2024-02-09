@@ -46,6 +46,12 @@ config_handle_print_create_sql(const char *name, const char *value) {
     printf("\n");
     printf("FLUSH PRIVILEGES;\n");
     printf("\n");
+    create_get_sql_database_insert1(sql, sizeof(sql));
+    printf("%s\n", sql);
+    printf("\n");
+    create_get_sql_database_insert2(sql, sizeof(sql), "<linux user>", "<linux group>");
+    printf("%s\n", sql);
+    printf("\n");
 
     return false;
 }

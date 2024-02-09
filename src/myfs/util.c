@@ -91,6 +91,13 @@ util_user_id(const char *name, uid_t *uid) {
     return 0;
 }
 
+bool
+util_user_exists(const char *name) {
+    uid_t uid;
+
+    return util_user_id(name, &uid) == 0;
+}
+
 int
 util_groupname(gid_t gid, char *dst, size_t size) {
     struct group grp, *result;
@@ -131,6 +138,13 @@ util_group_id(const char *name, gid_t *gid) {
 
     *gid = grp.gr_gid;
     return 0;
+}
+
+bool
+util_group_exists(const char *name) {
+    gid_t gid;
+
+    return util_group_id(name, &gid) == 0;
 }
 
 static void
