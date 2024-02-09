@@ -392,7 +392,7 @@ create_run_create_database(create_params_t *params) {
     }
 
     //Insert data.
-    printf("Adding  root directory and protecting it.\n");
+    printf("Adding root directory and protecting it.\n");
 
     create_get_sql_database_insert1(sql, sizeof(sql));
     success = db_queryf(&params->db, "%s", sql);
@@ -415,7 +415,7 @@ create_run_create_database(create_params_t *params) {
         return false;
     }
 
-    //Create the users.
+    //Create the users if needed.
     if (params->create_database_user) {
         printf("Creating database user '%s'\n", params->mariadb_user);
 

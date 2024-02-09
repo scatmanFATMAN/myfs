@@ -388,6 +388,15 @@ config_has(const char *name) {
 }
 
 bool
+config_equals(const char *name, const char *value) {
+    config_t *config;
+
+    config = config_find(name);
+
+    return config != NULL && config->value != NULL && strcmp(config->value, value) == 0;
+}
+
+bool
 config_set(const char *name, const char *value) {
     config_t *config;
 

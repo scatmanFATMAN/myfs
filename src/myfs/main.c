@@ -6,11 +6,17 @@
 #include "../common/log.h"
 #include "../common/config.h"
 #include "../common/db.h"
-#include "myfs.h"
-#include "create.h"
 #include "version.h"
+#include "util.h"
+#include "create.h"
+#include "myfs.h"
 
 #define MODULE "Main"
+
+/** Return codes for main() */
+#define MYFS_RETURN_SUCCESS  0
+#define MYFS_RETURN_CONFIG   1
+#define MYFS_RETURN_DATABASE 2
 
 static void
 config_error(const char *message) {
@@ -151,10 +157,37 @@ check_config() {
     return true;
 }
 
+static bool
+confirm_config() {
+    char input[8];
+
+    //TODO: don't confirm if there's no console attached
+    if (false) {
+        return true;
+    }
+
+    printf("\n");
+    printf("Database:                 %s@%s:%s/%s\n", config_get("mariadb_user"), config_get("mariadb_host"), config_get("mariadb_port"), config_get("mariadb_database"));
+    printf("Mount point:              %s\n", config_get("mount"));
+    if (config_equals("failed_query_retry_wait", "-1")) {
+        printf("Failed query retry wait:  Not retrying\n");
+        printf("Failed query retry count: Not retrying\n");
+    }
+    else {
+        printf("Failed query retry wait:  %s seconds\n", config_get("failed_query_retry_wait"));
+        printf("Failed query retry count: %s\n", config_equals("failed_query_retry_count", "-1") ? "Retrying forever" : config_get("failed_query_retry_count"));
+    }
+    printf("\n");
+
+    util_create_prompt(input, sizeof(input), "Confirm settings[y/n]?");
+
+    return strcmp(input, "y") == 0;
+}
+
 int
 main(int argc, char **argv) {
     struct fuse_operations operations;
-    int fargc, ret = 0;
+    int fargc, ret = MYFS_RETURN_SUCCESS;
     char **fargv;
     bool success;
     myfs_t myfs;
@@ -194,15 +227,21 @@ main(int argc, char **argv) {
               check_config();
 
     if (!success) {
-        ret = 1;
+        ret = MYFS_RETURN_CONFIG;
         goto done;
     }
 
-    log_info(MODULE, "Starting v%d.%.d.%d", VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH);
+    log_info(MODULE, "Starting %s v%d.%.d.%d", VERSION_NAME, VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH);
+
+    success = confirm_config();
+    if (!success) {
+        ret = MYFS_RETURN_CONFIG;
+        goto done;
+    }
 
     if (ret == 0) {
         if (!myfs_connect(&myfs)) {
-            ret = 2;
+            ret = MYFS_RETURN_DATABASE;
             goto done;
         }
     }

@@ -146,6 +146,15 @@ bool config_read(int argc, char **argv, const char *path);
 bool config_has(const char *name);
 
 /**
+ * Determines if the config parameter equals the `value`.
+ *
+ * @param[in] name The name of the parameter.
+ * @param[in] value The value to test.
+ * @return `true` if the parameter equals `value`, otherwise `false`.
+ */
+bool config_equals(const char *name, const char *value);
+
+/**
  * Set the value of a config parameter. The value is copied so you may pass in static strings.
  *
  * @param[in] name The name of the parameter.
