@@ -2,7 +2,10 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <errno.h>
 #include <unistd.h>
+#include <pwd.h>
+#include <grp.h>
 #include <libgen.h>
 #include <termios.h>
 #include "../common/string.h"
@@ -44,6 +47,90 @@ util_dirname(const char *path, char *dst, size_t size) {
     free(path_dupe);
 
     return dst;
+}
+
+int
+util_username(uid_t uid, char *dst, size_t size) {
+    struct passwd pwd, *result;
+    char unused[1024];
+    int ret;
+
+    ret = getpwuid_r(uid, &pwd, unused, sizeof(unused), &result);
+
+    if (result == NULL) {
+        if (ret == 0) {
+            //Not found.
+            return ENOENT;
+        }
+
+        return ret;
+    }
+
+    strlcpy(dst, pwd.pw_name, size);
+    return 0;
+}
+
+int
+util_user_id(const char *name, uid_t *uid) {
+    struct passwd pwd, *result;
+    char unused[1024];
+    int ret;
+
+    ret = getpwnam_r(name, &pwd, unused, sizeof(unused), &result);
+
+    if (result == NULL) {
+        if (ret == 0) {
+            //Not found.
+            return ENOENT;
+        }
+
+        return ret;
+    }
+
+    *uid = pwd.pw_uid;
+    return 0;
+}
+
+int
+util_groupname(gid_t gid, char *dst, size_t size) {
+    struct group grp, *result;
+    char unused[1024];
+    int ret;
+
+    ret = getgrgid_r(gid, &grp, unused, sizeof(unused), &result);
+
+    if (result == NULL) {
+        if (ret == 0) {
+            //Not found.
+            return ENOENT;
+        }
+
+        return ret;
+    }
+
+    strlcpy(dst, grp.gr_name, size);
+    return 0;
+}
+
+int
+util_group_id(const char *name, gid_t *gid) {
+    struct group grp, *result;
+    char unused[1024];
+    int ret;
+
+    ret = getgrnam_r(name, &grp, unused, sizeof(unused), &result);
+
+    if (result == NULL) {
+        if (ret == 0) {
+            //Not found.
+            return ENOENT;
+        }
+
+        return ret;
+    }
+
+    *gid = grp.gr_gid;
+    return 0;
 }
 
 static void

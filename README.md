@@ -18,28 +18,29 @@ MyFS currently only works on Linux and runs as whatever user/group started the f
 There are two ways to setup MyFS.
 1) Assisted Setup
   
-    + You can use ```myfs --create true``` to have MyFS prompt you for setup configurations. It will create and install the configuration file, create the database and user, and create the mount point (if needed) for you.
-    + Run ```myfs --config-file <path-to-config-file>```
+    + You can use `myfs --create true` to have MyFS prompt you for setup configurations. It will create and install the configuration file, create the database and user, and create the mount point (if needed) for you.
+    + Run `myfs --config-file <path-to-config-file>`
   
 2) Manual Setup
    
-  + The config file in ```etc/myfs.d/myfs.conf``` from this repository goes into ```/etc/myfs.d/myfs.conf``` on the file system. Update the configuration file with your configuration. You may rename it to whatever you want.
+  + The config file in `etc/myfs.d/myfs.conf` from this repository goes into `/etc/myfs.d/myfs.conf` on the file system. Update the configuration file with your configuration. You may rename it to whatever you want.
   + Create the MariaDB database and user.
-    + Run ```myfs --print-create-sql``` to get the SQL statements needed to run.
+    + Run `myfs --print-create-sql` to get the SQL statements needed to run.
   + Create the mount point.
-  + Run ```myfs --config-file <path-to-config-file>```
+  + Run `myfs --config-file <path-to-config-file>`
 
 ## Supported Features
 + Open, close, read, write, and truncate files.
 + Create, delete, and list directories.
 + Create and delete symbolic links.
 + Stat and rename (or move) files and directories.
++ Change ownership of files and directories. Ownership is stored by user/group name instead of UID and GID. This means multiple MyFS clients do not need their UIDs and GIDs sync'd up, only their names. I'm not sure if this is better or worse honestly, but we'll see. I can always support both methods or go back to only storing UID and GID.
 + Configurable logging to syslog and/or stdout.
-+ Easy to use installation and setup using the ```--create``` command line switch and answering prompts.
++ Easy to use installation and setup using the `--create` command line switch and answering prompts.
 + Configurable options for how to handle MariaDB query failures.
 
 ## Not (Yet) Supported Features
-+ Change ownership of files and directories.
++ Hard links.
 + Change permissions on files and directories.
 
 ## Support
@@ -58,15 +59,10 @@ Since MyFS uses MariaDB as its database, it uses the same naming convention that
 Most likely. I don't expect to use any MariaDB specific features so I'll be willing to bet that it works just fine.
 
 + **Can I use PostgreSQL?**\
-Not currently, but that'd be pretty cool down the line. If so, I suppose I'll need to think of a new project name (MyPostFS? MyFSPost? FSDB?). 
+Not currently, but that'd be pretty cool down the line.
 
 + **Can I use Oracle?**\
 No.
 
 + **Why would I use this?**\
 You probably wouldn't.
-
-+ **How do I create two or more consecutive blank lines in Markdown?**\
-...\
-...\
-I hijacked my own FAQ but I must know!

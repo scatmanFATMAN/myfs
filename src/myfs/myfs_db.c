@@ -4,16 +4,26 @@
 #include "../common/config.h"
 #include "../common/string.h"
 #include "../common/db.h"
+#include "util.h"
 #include "myfs_db.h"
 
 #define MODULE "MyFS DB"
 
 bool
 myfs_db_file_create(myfs_t *myfs, const char *name, myfs_file_type_t type, unsigned int parent_id, const char *content) {
-    char *name_esc, *content_esc;
+    char user[MYFS_USER_NAME_MAX_LEN + 1], group[MYFS_GROUP_NAME_MAX_LEN + 1];
+    char *name_esc, *user_esc, *group_esc, *content_esc;
     bool success;
+    struct fuse_context *fuse;
+
+    fuse = fuse_get_context();
+
+    util_username(fuse->uid, user, sizeof(user));
+    util_groupname(fuse->gid, group, sizeof(group));
 
     name_esc = db_escape(&myfs->db, name, NULL);
+    user_esc = db_escape(&myfs->db, user, NULL);
+    group_esc = db_escape(&myfs->db, group, NULL);
 
     //Files get a blank string while directories and other file types get NULL
     if (type == MYFS_FILE_TYPE_DIRECTORY || content == NULL) {
@@ -23,11 +33,13 @@ myfs_db_file_create(myfs_t *myfs, const char *name, myfs_file_type_t type, unsig
         content_esc = db_escape(&myfs->db, content, NULL);
     }
 
-    success = db_queryf(&myfs->db, "INSERT INTO `files` (`parent_id`,`name`,`type`,`content`,`created_on`,`last_accessed_on`,`last_modified_on`,`last_status_changed_on`)\n"
-                                   "VALUES (%u,'%s',%u,'%s',UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP())",
-                                   parent_id, name_esc, type, content_esc);
+    success = db_queryf(&myfs->db, "INSERT INTO `files` (`parent_id`,`name`,`type`,`user`,`group`,`content`,`created_on`,`last_accessed_on`,`last_modified_on`,`last_status_changed_on`)\n"
+                                   "VALUES (%u,'%s','%s','%s','%s','%s',UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP())",
+                                   parent_id, name_esc, myfs_file_type_str(type), user_esc, group_esc, content_esc);
 
     free(name_esc);
+    free(user_esc);
+    free(group_esc);
     free(content_esc);
 
     if (!success) {
@@ -66,6 +78,51 @@ myfs_db_file_set_times(myfs_t *myfs, unsigned int file_id, time_t last_accessed_
 
     if (!success) {
         log_err(MODULE, "Error updating times for File ID %u: %s", file_id, db_error(&myfs->db));
+    }
+
+    return success;
+}
+
+bool
+myfs_db_file_chown(myfs_t *myfs, unsigned int file_id, const char *user, const char *group) {
+    char *user_esc = NULL, *group_esc = NULL;
+    char query[2048];
+    int len;
+    bool success;
+
+    //Escape the user/group.
+    if (user != NULL && user[0] != '\0') {
+        user_esc = db_escape(&myfs->db, user, NULL);
+    }
+    if (group != NULL && group[0] != '\0') {
+        group_esc = db_escape(&myfs->db, group, NULL);
+    }
+
+    if (user_esc == NULL && group_esc == NULL) {
+        return false;
+    }
+
+    //Build the SQL based on whether the user, group, or both are being set.
+    len = strlcpy(query, "UPDATE `files`\nSET ", sizeof(query));
+    if (user_esc != NULL && group_esc != NULL) {
+        len += snprintf(query + len, sizeof(query) - len, "`user`='%s',`group`='%s'\n", user_esc, group_esc);
+    }
+    else if (user_esc != NULL) {
+        len += snprintf(query + len, sizeof(query) - len, "`user`='%s'\n", user_esc);
+    }
+    else if (group_esc != NULL) {
+        len += snprintf(query + len, sizeof(query) - len, "`group`='%s'\n", group_esc);
+    }
+    len += snprintf(query + len, sizeof(query) - len, "WHERE `file_id`=%u", file_id);
+
+    //Run!
+    success = db_query(&myfs->db, query, len);
+
+    if (user_esc != NULL) {
+        free(user_esc);
+    }
+    if (group_esc != NULL) {
+        free(group_esc);
     }
 
     return success;
@@ -272,10 +329,11 @@ myfs_db_file_query(myfs_t *myfs, unsigned int file_id, bool include_children) {
     myfs_file_t *file = NULL;
     MYSQL_RES *res;
     MYSQL_ROW row;
+    int ret;
 
     fuse = fuse_get_context();
 
-    res = db_selectf(&myfs->db, "SELECT `file_id`,`name`,`parent_id`,`type`,`last_accessed_on`,`last_modified_on`,`last_status_changed_on`,LENGTH(`content`)\n"
+    res = db_selectf(&myfs->db, "SELECT `file_id`,`name`,`parent_id`,`type`,`user`,`group`,`last_accessed_on`,`last_modified_on`,`last_status_changed_on`,LENGTH(`content`)\n"
                                 "FROM `files`\n"
                                 "WHERE `file_id`=%u",
                                 file_id);
@@ -306,7 +364,7 @@ myfs_db_file_query(myfs_t *myfs, unsigned int file_id, bool include_children) {
             case MYFS_FILE_TYPE_FILE:
                 file->st.st_mode = S_IFREG | 0600;
                 file->st.st_nlink = 1;
-                file->st.st_size = strtoul(row[7], NULL, 10);
+                file->st.st_size = strtoul(row[9], NULL, 10);
                 break;
             case MYFS_FILE_TYPE_DIRECTORY:
                 file->st.st_mode = S_IFDIR | 0700;
@@ -315,17 +373,31 @@ myfs_db_file_query(myfs_t *myfs, unsigned int file_id, bool include_children) {
             case MYFS_FILE_TYPE_SOFT_LINK:
                 file->st.st_mode = S_IFLNK | 0600;
                 file->st.st_nlink = 1;
-                file->st.st_size = strtoul(row[7], NULL, 10);
+                file->st.st_size = strtoul(row[9], NULL, 10);
                 break;
             case MYFS_FILE_TYPE_INVALID:
                 break;
         }
         file->st.st_ino = file->file_id;
-        file->st.st_uid = fuse->uid;
-        file->st.st_gid = fuse->gid;
-        file->st.st_atime = strtoll(row[4], NULL, 10);
-        file->st.st_mtime = strtoll(row[5], NULL, 10);
-        file->st.st_ctime = strtoll(row[6], NULL, 10);
+        ret = util_user_id(row[4], &file->st.st_uid);
+        if (ret != 0) {
+            log_err(MODULE, "Error getting user '%s' for File ID %u: %s", row[4], file->file_id, strerror(ret));
+            log_err(MODULE, "Setting the user to the program's user[%u]", fuse->uid);
+
+            //TODO: Make a config option on how to handle this condition?
+            file->st.st_uid = fuse->uid;
+        }
+        ret = util_group_id(row[5], &file->st.st_gid);
+        if (ret != 0) {
+            log_err(MODULE, "Error getting group '%s' for File ID %u: %s", row[5], file->file_id, strerror(ret));
+            log_err(MODULE, "Setting the group to the program's group[%u]", fuse->gid);
+
+            //TODO: Make a config option on how to handle this condition?
+            file->st.st_gid = fuse->gid;
+        }
+        file->st.st_atime = strtoll(row[6], NULL, 10);
+        file->st.st_mtime = strtoll(row[7], NULL, 10);
+        file->st.st_ctime = strtoll(row[8], NULL, 10);
     }
 
     mysql_free_result(res);

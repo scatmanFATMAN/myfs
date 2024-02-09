@@ -1,13 +1,14 @@
 #pragma once
 
 #include <string.h>
+#include <sys/types.h>
 
 /**
  * Parses a path into its file name component and copies it into a buffer.
  *
  * @param[in] path The path to get the file name component of.
  * @param[out] dst The buffer to copy the file name component into.
- * @param[in[ size The size of `buffer`.
+ * @param[in] size The size of `dst`.
  * @return a pointer to `dst`.
  */
 const char * util_basename(const char *path, char *dst, size_t size);
@@ -17,10 +18,48 @@ const char * util_basename(const char *path, char *dst, size_t size);
  *
  * @param[in] path The path to get the directory component of.
  * @param[out] dst The buffer to copy the directory component into.
- * @param[in[ size The size of `buffer`.
+ * @param[in] size The size of `dst`.
  * @return a pointer to `dst`.
  */
 const char * util_dirname(const char *path, char *dst, size_t size);
+
+/**
+ * Looks up a Linux user by its ID and copies its name into a buffer.
+ *
+ * @param[in] uid The User ID of the user.
+ * @param[out] dst The buffer to copy the user's name into.
+ * @param[in] size The size of `dst`.
+ * @return 0 on success, or an errno otherwise.
+ */
+int util_username(uid_t uid, char *dst, size_t size);
+
+/**
+ * Looks up a Linux user by its name and gets its UID.
+ *
+ * @param[in] name The name of the user.
+ * @param[out] uid The buffer to store the UID into.
+ * @return 0 on success, or an errno otherwise.
+ */
+int util_user_id(const char *name, uid_t *uid);
+
+/**
+ * Looks up a Linux group by its ID and copies its name into a buffer.
+ *
+ * @param[in] gid The Group ID of the group.
+ * @param[out] dst The buffer to copy the group's name into.
+ * @param[in] size The size of `dst`.
+ * @return 0 on success, or an errno otherwise.
+ */
+int util_groupname(gid_t gid, char *dst, size_t size);
+
+/**
+ * Looks up a Linux group by its name and gets its GID.
+ *
+ * @param[in] name The name of the group.
+ * @param[out] gid The buffer to store the GID into.
+ * @return 0 on success, or an errno otherwise.
+ */
+int util_group_id(const char *name, gid_t *gid);
 
 /**
  * Creates a prompt using the format string `fmt` and captures user input into
@@ -28,7 +67,7 @@ const char * util_dirname(const char *path, char *dst, size_t size);
  *
  * @params[out] dst The buffer to store the input.
  * @params[in] size The size of `dst`.
- * @params[in[ fmt The printf-style format string for the prompt.
+ * @params[in] fmt The printf-style format string for the prompt.
  */
 void util_create_prompt(char *dst, int size, const char *fmt, ...);
 
@@ -40,6 +79,6 @@ void util_create_prompt(char *dst, int size, const char *fmt, ...);
  *
  * @params[out] dst The buffer to store the input.
  * @params[in] size The size of `dst`.
- * @params[in[ fmt The printf-style format string for the prompt.
+ * @params[in] fmt The printf-style format string for the prompt.
  */
 void util_create_prompt_password(char *dst, int size, const char *fmt, ...);

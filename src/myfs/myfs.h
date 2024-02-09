@@ -19,6 +19,10 @@
 /** The maximum number of open files. */
 #define MYFS_FILES_OPEN_MAX 128
 
+/** The maximum length of a user name and group name, as specified in Linux's useradd and groupadd programs. */
+#define MYFS_USER_NAME_MAX_LEN  32
+#define MYFS_GROUP_NAME_MAX_LEN 32
+
 /**
  *  The possible types for files.
  */
@@ -75,6 +79,14 @@ void myfs_file_free(myfs_file_t *file);
 myfs_file_type_t myfs_file_type(const char *type);
 
 /**
+ * Returns the enum file type as a string.
+ *
+ * @param[in] type The enum file type.
+ * @return The enum file type as a string.
+ */
+const char * myfs_file_type_str(myfs_file_type_t type);
+
+/**
  * Connects MyFS to MariaDB.
  *
  * @param[in] myfs The MyFS context.
@@ -89,6 +101,9 @@ bool myfs_connect(myfs_t *myfs);
  */
 void myfs_disconnect(myfs_t *myfs);
 
+/**
+ * FUSE callbacks below.
+ */
 int myfs_statfs(const char *path, struct statvfs *stv);
 int myfs_getattr(const char *path, struct stat *st, struct fuse_file_info *fi);
 int myfs_access(const char *path, int mode);

@@ -43,6 +43,18 @@ bool myfs_db_file_delete(myfs_t *myfs, unsigned int file_id);
 bool myfs_db_file_set_times(myfs_t *myfs, unsigned int file_id, time_t last_accessed_on, time_t last_modified_on);
 
 /**
+ * Sets the user and group of the given File ID. If either `user` or `group` are NULL or blank, then that
+ * value will be ignored.
+ *
+ * @param[in] myfs The MyFS context.
+ * @param[in] file_id The File ID to update.
+ * @param[in] user The user to set, or NULL or blank to not set.
+ * @param[in] group The group to set, or NULL or blank to not set.
+ * @return `true` if the file was updated, otherwise `false`.
+ */
+bool myfs_db_file_chown(myfs_t *myfs, unsigned int file_id, const char *user, const char *group);
+
+/**
  * Swaps two files atomically.
  *
  * @param[in] myfs The MyFS context.

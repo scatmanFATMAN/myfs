@@ -6,6 +6,7 @@
 #include "../common/config.h"
 #include "../common/db.h"
 #include "../common/string.h"
+#include "myfs.h"
 #include "util.h"
 #include "create.h"
 
@@ -437,20 +438,25 @@ create_get_sql_database(char *dst, size_t size, const char *name) {
 
 void
 create_get_sql_database_table(char *dst, size_t size) {
-    strlcpy(dst, "CREATE TABLE `files` (\n"
-                 "    `file_id` int(10) unsigned NOT NULL AUTO_INCREMENT,\n"
-                 "    `parent_id` int(10) unsigned NOT NULL,\n"
-                 "    `name` varchar(64) NOT NULL,\n"
-                 "    `type` enum('File','Directory','Soft Link') NOT NULL,\n"
-                 "    `content` longblob NOT NULL,\n"
-                 "    `created_on` int(10) unsigned NOT NULL,\n"
-                 "    `last_accessed_on` int(10) unsigned NOT NULL,\n"
-                 "    `last_modified_on` int(10) unsigned NOT NULL,\n"
-                 "    `last_status_changed_on` int(10) unsigned NOT NULL,\n"
-                 "    PRIMARY KEY (`file_id`),\n"
-                 "    KEY `fk_files_parentid` (`parent_id`),\n"
-                 "    CONSTRAINT `fk_files_parentid` FOREIGN KEY (`parent_id`) REFERENCES `files` (`file_id`) ON DELETE CASCADE ON UPDATE CASCADE\n"
-                 ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;", size);
+    snprintf(dst, size, "CREATE TABLE `files` (\n"
+                        "    `file_id` int(10) unsigned NOT NULL AUTO_INCREMENT,\n"
+                        "    `parent_id` int(10) unsigned NOT NULL,\n"
+                        "    `name` varchar(%u) NOT NULL,\n"
+                        "    `type` enum('File','Directory','Soft Link') NOT NULL,\n"
+                        "    `user` varchar(%u) NOT NULL,\n"
+                        "    `group` varchar(%u) NOT NULL,\n"
+                        "    `content` longblob NOT NULL,\n"
+                        "    `created_on` bigint(20) NOT NULL,\n"
+                        "    `last_accessed_on` bigint(20) NOT NULL,\n"
+                        "    `last_modified_on` bigint(20) NOT NULL,\n"
+                        "    `last_status_changed_on` bigint(20) NOT NULL,\n"
+                        "    PRIMARY KEY (`file_id`),\n"
+                        "    KEY `fk_files_parentid` (`parent_id`),\n"
+                        "    CONSTRAINT `fk_files_parentid` FOREIGN KEY (`parent_id`) REFERENCES `files` (`file_id`) ON DELETE CASCADE ON UPDATE CASCADE\n"
+                        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;",
+                        MYFS_FILE_NAME_MAX_LEN,
+                        MYFS_USER_NAME_MAX_LEN,
+                        MYFS_GROUP_NAME_MAX_LEN);
 }
 
 void

@@ -13,7 +13,7 @@
 
 #define MODULE "MyFS"
 
-#define MYFS_TRACE
+//#define MYFS_TRACE
 #if defined(MYFS_TRACE)
 # define MYFS_LOG_TRACE(fmt, ...)                   \
         do {                                        \
@@ -67,6 +67,22 @@ myfs_file_type(const char *type) {
     return MYFS_FILE_TYPE_INVALID;
 }
 
+const char *
+myfs_file_type_str(myfs_file_type_t type) {
+    switch (type) {
+        case MYFS_FILE_TYPE_FILE:
+            return "File";
+        case MYFS_FILE_TYPE_DIRECTORY:
+            return "Directory";
+        case MYFS_FILE_TYPE_SOFT_LINK:
+            return "Soft Link";
+        case MYFS_FILE_TYPE_INVALID:
+            break;
+    }
+
+    return "Invalid";
+}
+
 /**
  * Queries MariaDB for MyFS file based on a full file path. For example, if `path` is /path/to/file, then
  * the MyFS represnted by the name 'file' with parent 'to' will be returned.
@@ -105,6 +121,29 @@ myfs_file_get(myfs_t *myfs, const char *path, bool include_children) {
     MYFS_LOG_TRACE("End");
 
     return file;
+}
+
+/**
+ * Gets the File ID for a MyFS file based on `path`. Calls `myfs_file_get_file()`.
+ *
+ * @param[in] myfs The MyFS context.
+ * @param[in] path The path to the MyFS file.
+ * @param[out] file_id On success, stores the File ID.
+ * @return `true` on success, otherwise `false`.
+ */
+static bool
+myfs_file_get_file_id(myfs_t *myfs, const char *path, unsigned int *file_id) {
+    myfs_file_t *file;
+
+    file = myfs_file_get(myfs, path, false);
+    if (file == NULL) {
+        return false;
+    }
+
+    *file_id = file->file_id;
+    myfs_file_free(file);
+
+    return true;
 }
 
 /**
@@ -166,6 +205,37 @@ myfs_disconnect(myfs_t *myfs) {
 /******************************************************************************************************
  *                  FUSE CALLBACK COMMON FUNCTIONS
  *****************************************************************************************************/
+
+/**
+ * Gets a File ID from one of two methods. First looks to see if `fi` is not NULL and looks up the
+ * file in the file table. Otherwise, it falls back to looking up the file in the database using `path`.
+ *
+ * @param[in] myfs The MyFS context.
+ * @param[in] path The path to the MyFS file in the database.
+ * @param[in] fi FUSE's file info structure, used to look up an open file if open.
+ * @param[out] file_id Stores the File ID on success.
+ * @return `true` on success, otherwise `false`.
+ */
+static bool
+myfs_get_file_id(myfs_t *myfs, const char *path, struct fuse_file_info *fi, unsigned int *file_id) {
+    bool success;
+
+    if (fi != NULL) {
+        if (myfs->files[fi->fh] == NULL) {
+            return false;
+        }
+
+        *file_id = myfs->files[fi->fh]->file_id;
+    }
+    else {
+        success = myfs_file_get_file_id(myfs, path, file_id);
+        if (!success) {
+            return false;
+        }
+    }
+
+    return true;
+}
 
 int
 myfs_open_helper(const char *path, bool dir, bool truncate, struct fuse_file_info *fi) {
@@ -327,28 +397,23 @@ myfs_truncate(const char *path, off_t size, struct fuse_file_info *fi) {
 
 int
 myfs_utimens(const char *path, const struct timespec ts[2], struct fuse_file_info *fi) {
-    myfs_file_t *file;
-    myfs_t *myfs;
+    unsigned int file_id;
     bool success;
+    myfs_t *myfs;
 
     MYFS_LOG_TRACE("Begin; Path[%s]; atime[%ld]; mtime[%ld]; FI[%p]", path, ts[0].tv_sec, ts[1].tv_sec, fi);
 
-    //TODO: file info always seems to be NULL? The file should be open though
+    myfs = (myfs_t *)fuse_get_context()->private_data;
 
-    if (fi == NULL) {
-        fprintf(stderr, "BLAH\n");
-        exit(1);
+    //Get the file from the open file table or the path if it's not open
+    success = myfs_get_file_id(myfs, path, fi, &file_id);
+    if (!success) {
+        return -ENOENT;
     }
-    else {
-        myfs = (myfs_t *)fuse_get_context()->private_data;
 
-        //Get the file from the open file table
-        file = myfs->files[fi->fh];
-
-        success = myfs_db_file_set_times(myfs, file->file_id, ts[0].tv_sec, ts[1].tv_sec);
-        if (!success) {
-            return -EIO;
-        }
+    success = myfs_db_file_set_times(myfs, file_id, ts[0].tv_sec, ts[1].tv_sec);
+    if (!success) {
+        return -EIO;
     }
 
     MYFS_LOG_TRACE("End");
@@ -357,9 +422,48 @@ myfs_utimens(const char *path, const struct timespec ts[2], struct fuse_file_inf
 
 int
 myfs_chown(const char *path, uid_t uid, gid_t gid, struct fuse_file_info *fi) {
-    MYFS_LOG_TRACE("Begin; Path[%s]; UID[%d]; GID[%d]; FI[%p]", path, uid, gid, fi);
+    char user[MYFS_USER_NAME_MAX_LEN + 1], group[MYFS_GROUP_NAME_MAX_LEN + 1];
+    unsigned int file_id;
+    bool success;
+    int ret;
+    myfs_t *myfs;
 
-    //This callback needs to be implemented for FUSE but MyFS doesn't need it since all user/groups are inherited by the user/group running the file system.
+    MYFS_LOG_TRACE("Begin; Path[%s]; UID[%u]; GID[%u]; FI[%p]", path, uid, gid, fi);
+
+    myfs = (myfs_t *)fuse_get_context()->private_data;
+
+    //Get the file from the open file table or the path if it's not open
+    success = myfs_get_file_id(myfs, path, fi, &file_id);
+    if (!success) {
+        return -ENOENT;
+    }
+
+    //uid and gid can be <type of uid_t|gid_t>_MAX or -1, which means don't change them.
+    //When testing, Use -1 for robustness.
+    user[0] = '\0';
+    group[0] = '\0';
+
+    if (uid != (uid_t)-1) {
+        ret = util_username(uid, user, sizeof(user));
+        if (ret != 0) {
+            log_err(MODULE, "Error changing owner on File ID %u: Error finding user %u: %s", file_id, uid, strerror(ret));
+            return -ret;
+        }
+    }
+
+    if (gid != (gid_t)-1) {
+        ret = util_groupname(gid, group, sizeof(group));
+        if (ret != 0) {
+            log_err(MODULE, "Error changing owner on File ID %u: Error finding group %u: %s", file_id, gid, strerror(errno));
+            return -ret;
+        }
+    }
+
+    success = myfs_db_file_chown(myfs, file_id, user, group);
+    if (!success) {
+        log_err(MODULE, "Error changing owner on File ID %u: %s", file_id, db_error(&myfs->db));
+        return -EIO;
+    }
 
     MYFS_LOG_TRACE("End");
 
@@ -526,14 +630,13 @@ myfs_mkdir(const char *path, mode_t mode) {
     return 0;
 }
 
-//TODO: This also is supposed to open the file once it's created so we can call most of myfs_open() somehow 
 int
 myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
     char dir[MYFS_PATH_NAME_MAX_LEN + 1];
     char name[MYFS_FILE_NAME_MAX_LEN + 1];
     bool success;
-    uint64_t fh = 0;
-    myfs_file_t *parent, *file;
+    int ret;
+    myfs_file_t *parent;
     myfs_t *myfs;
 
     MYFS_LOG_TRACE("Begin; Path[%s]; FI[%p]", path, fi);
@@ -560,6 +663,13 @@ myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
         return -EIO;
     }
 
+    //This callback is also supposed to open the file.
+    ret = myfs_open_helper(path, false, false, fi);
+    if (ret != 0) {
+        return ret;
+    }
+
+#if 0
     //Look for the first available file handle.
     for (fh = 0; fh < MYFS_FILES_OPEN_MAX; fh++) {
         if (myfs->files[fh] == NULL) {
@@ -584,6 +694,7 @@ myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
 
     //Put the file handle into Fuse's file info struct so we can get it in other file operations
     fi->fh = fh;
+#endif
 
     MYFS_LOG_TRACE("End");
 
