@@ -376,10 +376,42 @@ create_run_create_database(create_params_t *params) {
     }
 
     //Create the `files` table.
-    create_get_sql_database_table(sql, sizeof(sql));
+    create_get_sql_database_table1(sql, sizeof(sql));
     success = db_queryf(&params->db, "%s", sql);
     if (!success) {
         printf("  Error creating table 'files': %s\n", db_error(&params->db));
+        return false;
+    }
+
+    //Create the `file_protection` table
+    create_get_sql_database_table2(sql, sizeof(sql));
+    success = db_queryf(&params->db, "%s", sql);
+    if (!success) {
+        printf("  Error creating table 'file_protection': %s\n", db_error(&params->db));
+        return false;
+    }
+
+    //Insert data.
+    printf("Adding  root directory and protecting it.\n");
+
+    create_get_sql_database_insert1(sql, sizeof(sql));
+    success = db_queryf(&params->db, "%s", sql);
+    if (!success) {
+        printf("  Error setting sql_mode: %s\n", db_error(&params->db));
+        return false;
+    }
+
+    create_get_sql_database_insert2(sql, sizeof(sql), params->user, params->group);
+    success = db_queryf(&params->db, "%s", sql);
+    if (!success) {
+        printf("  Error inserting root directory: %s\n", db_error(&params->db));
+        return false;
+    }
+
+    create_get_sql_database_insert3(sql, sizeof(sql));
+    success = db_queryf(&params->db, "%s", sql);
+    if (!success) {
+        printf("  Error inserting root directory protection: %s\n", db_error(&params->db));
         return false;
     }
 
@@ -408,20 +440,6 @@ create_run_create_database(create_params_t *params) {
     success = db_queryf(&params->db, "%s", sql);
     if (!success) {
         printf("  Error granting privileges to user '%s': %s\n", params->mariadb_user, db_error(&params->db));
-        return false;
-    }
-
-    create_get_sql_database_insert1(sql, sizeof(sql));
-    success = db_queryf(&params->db, "%s", sql);
-    if (!success) {
-        printf("  Error setting sql_mode: %s\n", db_error(&params->db));
-        return false;
-    }
-
-    create_get_sql_database_insert2(sql, sizeof(sql), params->user, params->group);
-    success = db_queryf(&params->db, "%s", sql);
-    if (!success) {
-        printf("  Error inserting root directory: %s\n", db_error(&params->db));
         return false;
     }
 
@@ -489,7 +507,7 @@ create_get_sql_database(char *dst, size_t size, const char *name) {
 }
 
 void
-create_get_sql_database_table(char *dst, size_t size) {
+create_get_sql_database_table1(char *dst, size_t size) {
     snprintf(dst, size, "CREATE TABLE `files` (\n"
                         "    `file_id` int(10) unsigned NOT NULL AUTO_INCREMENT,\n"
                         "    `parent_id` int(10) unsigned NOT NULL,\n"
@@ -513,18 +531,12 @@ create_get_sql_database_table(char *dst, size_t size) {
 }
 
 void
-create_get_sql_database_user_create(char *dst, size_t size, const char *user, const char *host, const char *password) {
-    snprintf(dst, size, "CREATE USER '%s'@'%s' IDENTIFIED BY '%s';", user, host, password);
-}
-
-void
-create_get_sql_database_user_grant1(char *dst, size_t size, const char *user, const char *host, const char *database) {
-    snprintf(dst, size, "GRANT USAGE ON `%s`.* TO '%s'@'%s';", database, user, host);
-}
-
-void
-create_get_sql_database_user_grant2(char *dst, size_t size, const char *user, const char *host, const char *database) {
-    snprintf(dst, size, "GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'%s' WITH GRANT OPTION;", database, user, host);
+create_get_sql_database_table2(char *dst, size_t size) {
+    strlcpy(dst, "CREATE TABLE `file_protection` (\n"
+                 "    `file_id` int(10) unsigned NOT NULL,\n"
+                 "    PRIMARY KEY (`file_id`),\n"
+                 "    CONSTRAINT `fk_fileprotection_fileid` FOREIGN KEY (`file_id`) REFERENCES `files` (`file_id`) ON UPDATE CASCADE\n"
+                 ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;", size);
 }
 
 void
@@ -537,4 +549,24 @@ create_get_sql_database_insert2(char *dst, size_t size, const char *user, const 
     snprintf(dst, size, "INSERT INTO `files` (`file_id`,`parent_id`,`name`,`type`,`user`,`group`,`mode`,`content`,`created_on`,`last_accessed_on`,`last_modified_on`,`last_status_changed_on`)\n"
                         "VALUES (0,0,'','Directory','%s','%s',16893,'',UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP());",
                         user, group);
+}
+
+void
+create_get_sql_database_insert3(char *dst, size_t size) {
+    strlcpy(dst, "INSERT INTO `file_protection` (`file_id`)\nVALUES (0);", size);
+}
+
+void
+create_get_sql_database_user_create(char *dst, size_t size, const char *user, const char *host, const char *password) {
+    snprintf(dst, size, "CREATE USER '%s'@'%s' IDENTIFIED BY '%s';", user, host, password);
+}
+
+void
+create_get_sql_database_user_grant1(char *dst, size_t size, const char *user, const char *host, const char *database) {
+    snprintf(dst, size, "GRANT USAGE ON `%s`.* TO '%s'@'%s';", database, user, host);
+}
+
+void
+create_get_sql_database_user_grant2(char *dst, size_t size, const char *user, const char *host, const char *database) {
+    snprintf(dst, size, "GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'%s' WITH GRANT OPTION;", database, user, host);
 }

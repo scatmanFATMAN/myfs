@@ -32,7 +32,19 @@ config_handle_print_create_sql(const char *name, const char *value) {
     printf("\n");
     printf("USE `%s`;\n", "<myfs_database>");
     printf("\n");
-    create_get_sql_database_table(sql, sizeof(sql));
+    create_get_sql_database_table1(sql, sizeof(sql));
+    printf("%s\n", sql);
+    printf("\n");
+    create_get_sql_database_table2(sql, sizeof(sql));
+    printf("%s\n", sql);
+    printf("\n");
+    create_get_sql_database_insert1(sql, sizeof(sql));
+    printf("%s\n", sql);
+    printf("\n");
+    create_get_sql_database_insert2(sql, sizeof(sql), "<linux user>", "<linux group>");
+    printf("%s\n", sql);
+    printf("\n");
+    create_get_sql_database_insert3(sql, sizeof(sql));
     printf("%s\n", sql);
     printf("\n");
     create_get_sql_database_user_create(sql, sizeof(sql), "<myfs_user>", "<myfs_user_host>", "<myfs_user_password>");
@@ -45,12 +57,6 @@ config_handle_print_create_sql(const char *name, const char *value) {
     printf("%s\n", sql);
     printf("\n");
     printf("FLUSH PRIVILEGES;\n");
-    printf("\n");
-    create_get_sql_database_insert1(sql, sizeof(sql));
-    printf("%s\n", sql);
-    printf("\n");
-    create_get_sql_database_insert2(sql, sizeof(sql), "<linux user>", "<linux group>");
-    printf("%s\n", sql);
     printf("\n");
 
     return false;
