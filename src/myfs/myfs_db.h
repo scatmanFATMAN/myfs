@@ -16,10 +16,11 @@
  * @param[in] name The name of the file.
  * @param[in] type The file type.
  * @param[in] parent_id The File ID of the parent the file should be created in.
+ * @param[in] mode The mode to create the file with.
  * @param[in] content Any initial content for the file.
  * @return `true` if the file was created, otherwise `false`.
  */
-bool myfs_db_file_create(myfs_t *myfs, const char *name, myfs_file_type_t type, unsigned int parent_id, const char *content);
+bool myfs_db_file_create(myfs_t *myfs, const char *name, myfs_file_type_t type, unsigned int parent_id, mode_t mode, const char *content);
 
 /**
  * Deletes a file from MariaDB. If this file is a parent to other files, all children will
@@ -53,6 +54,16 @@ bool myfs_db_file_set_times(myfs_t *myfs, unsigned int file_id, time_t last_acce
  * @return `true` if the file was updated, otherwise `false`.
  */
 bool myfs_db_file_chown(myfs_t *myfs, unsigned int file_id, const char *user, const char *group);
+
+/**
+ * Sets the mode of the given File ID.
+ *
+ * @param[in] myfs The MyFS context.
+ * @param[in] file_id The File ID to update.
+ * @param[in] mode The mode to set.
+ * @return `true` if the file was updated, otherwise `false`.
+ */
+bool myfs_db_file_chmod(myfs_t *myfs, unsigned int file_id, mode_t mode);
 
 /**
  * Swaps two files atomically.

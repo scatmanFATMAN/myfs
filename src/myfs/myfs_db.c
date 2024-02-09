@@ -10,7 +10,7 @@
 #define MODULE "MyFS DB"
 
 bool
-myfs_db_file_create(myfs_t *myfs, const char *name, myfs_file_type_t type, unsigned int parent_id, const char *content) {
+myfs_db_file_create(myfs_t *myfs, const char *name, myfs_file_type_t type, unsigned int parent_id, mode_t mode, const char *content) {
     char user[MYFS_USER_NAME_MAX_LEN + 1], group[MYFS_GROUP_NAME_MAX_LEN + 1];
     char *name_esc, *user_esc, *group_esc, *content_esc;
     bool success;
@@ -33,9 +33,29 @@ myfs_db_file_create(myfs_t *myfs, const char *name, myfs_file_type_t type, unsig
         content_esc = db_escape(&myfs->db, content, NULL);
     }
 
-    success = db_queryf(&myfs->db, "INSERT INTO `files` (`parent_id`,`name`,`type`,`user`,`group`,`content`,`created_on`,`last_accessed_on`,`last_modified_on`,`last_status_changed_on`)\n"
-                                   "VALUES (%u,'%s','%s','%s','%s','%s',UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP())",
-                                   parent_id, name_esc, myfs_file_type_str(type), user_esc, group_esc, content_esc);
+    switch (type) {
+        case MYFS_FILE_TYPE_FILE:
+            if (!(mode & S_IFREG)) {
+                mode |= S_IFREG;
+            }
+            break;
+        case MYFS_FILE_TYPE_DIRECTORY:
+            if (!(mode & S_IFDIR)) {
+                mode |= S_IFDIR;
+            }
+            break;
+        case MYFS_FILE_TYPE_SOFT_LINK:
+            if (!(mode & S_IFLNK)) {
+                mode |= S_IFLNK;
+            }
+            break;
+        case MYFS_FILE_TYPE_INVALID:
+            break;
+    }
+
+    success = db_queryf(&myfs->db, "INSERT INTO `files` (`parent_id`,`name`,`type`,`user`,`group`,`mode`,`content`,`created_on`,`last_accessed_on`,`last_modified_on`,`last_status_changed_on`)\n"
+                                   "VALUES (%u,'%s','%s','%s','%s',%u,'%s',UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP())",
+                                   parent_id, name_esc, myfs_file_type_str(type), user_esc, group_esc, mode, content_esc);
 
     free(name_esc);
     free(user_esc);
@@ -117,12 +137,32 @@ myfs_db_file_chown(myfs_t *myfs, unsigned int file_id, const char *user, const c
 
     //Run!
     success = db_query(&myfs->db, query, len);
+    if (!success) {
+        log_err(MODULE, "Error setting user[%s] and group[%s] on File ID %u: %s", user, group, file_id, db_error(&myfs->db));
+    }
 
     if (user_esc != NULL) {
         free(user_esc);
     }
     if (group_esc != NULL) {
         free(group_esc);
+    }
+
+    return success;
+}
+
+bool
+myfs_db_file_chmod(myfs_t *myfs, unsigned int file_id, mode_t mode) {
+    bool success;
+
+    success = db_queryf(&myfs->db, "UPDATE `files`\n"
+                                   "SET `mode`=%u\n"
+                                   "WHERE `file_id`=%u",
+                                   mode,
+                                   file_id);
+
+    if (!success) {
+        log_err(MODULE, "Error setting mode[%u] on File ID %u: %s", mode, file_id, db_error(&myfs->db));
     }
 
     return success;
@@ -333,7 +373,7 @@ myfs_db_file_query(myfs_t *myfs, unsigned int file_id, bool include_children) {
 
     fuse = fuse_get_context();
 
-    res = db_selectf(&myfs->db, "SELECT `file_id`,`name`,`parent_id`,`type`,`user`,`group`,`last_accessed_on`,`last_modified_on`,`last_status_changed_on`,LENGTH(`content`)\n"
+    res = db_selectf(&myfs->db, "SELECT `file_id`,`name`,`parent_id`,`type`,`user`,`group`,`mode`,`last_accessed_on`,`last_modified_on`,`last_status_changed_on`,LENGTH(`content`)\n"
                                 "FROM `files`\n"
                                 "WHERE `file_id`=%u",
                                 file_id);
@@ -358,26 +398,26 @@ myfs_db_file_query(myfs_t *myfs, unsigned int file_id, bool include_children) {
             file->parent = myfs_db_file_query(myfs, strtoul(row[2], NULL, 10), false);
         }
         file->type = myfs_file_type(row[3]);
+        file->st.st_mode = strtoul(row[6], NULL, 10);
 
         //Setup the struct stat.
+        //TODO: I don't really need the `type` field anymore because I should be able to use st.st_mode to know what type it is. It's just kinda nice seeing the type in the database though. Easier to query too... so maybe it's a good idea to leave it.
         switch (file->type) {
             case MYFS_FILE_TYPE_FILE:
-                file->st.st_mode = S_IFREG | 0600;
                 file->st.st_nlink = 1;
-                file->st.st_size = strtoul(row[9], NULL, 10);
+                file->st.st_size = strtoul(row[10], NULL, 10);
                 break;
             case MYFS_FILE_TYPE_DIRECTORY:
-                file->st.st_mode = S_IFDIR | 0700;
                 file->st.st_nlink = 2;
                 break;
             case MYFS_FILE_TYPE_SOFT_LINK:
-                file->st.st_mode = S_IFLNK | 0600;
                 file->st.st_nlink = 1;
-                file->st.st_size = strtoul(row[9], NULL, 10);
+                file->st.st_size = strtoul(row[10], NULL, 10);
                 break;
             case MYFS_FILE_TYPE_INVALID:
                 break;
         }
+
         file->st.st_ino = file->file_id;
         ret = util_user_id(row[4], &file->st.st_uid);
         if (ret != 0) {
@@ -395,9 +435,9 @@ myfs_db_file_query(myfs_t *myfs, unsigned int file_id, bool include_children) {
             //TODO: Make a config option on how to handle this condition?
             file->st.st_gid = fuse->gid;
         }
-        file->st.st_atime = strtoll(row[6], NULL, 10);
-        file->st.st_mtime = strtoll(row[7], NULL, 10);
-        file->st.st_ctime = strtoll(row[8], NULL, 10);
+        file->st.st_atime = strtoll(row[7], NULL, 10);
+        file->st.st_mtime = strtoll(row[8], NULL, 10);
+        file->st.st_ctime = strtoll(row[9], NULL, 10);
     }
 
     mysql_free_result(res);

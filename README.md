@@ -12,7 +12,7 @@ MyFS gets mounted to a mount point like any other file system would. Once mounte
 
 This can almost be thought of as an NFS file system, where multiple clients can mount to a centralized location - except using a MariaDB database on the back end to present the file system.
 
-MyFS currently only works on Linux and runs as whatever user/group started the file system. Files inherit MyFS's user/group with 0600 permissions while directories also inherit MyFS's user/group but with 0700 permissions.
+MyFS currently stores users and groups for files and directories but name, not UID or GID. This lets multiple MyFS clients on different hosts have differen UIDs and GIDs for the same named user or group. This also has a downside of that the user and group names must be sync'd and I'm not sure if this is the best way to do it yet.
 
 ## How to use it
 There are two ways to setup MyFS.
@@ -35,13 +35,13 @@ There are two ways to setup MyFS.
 + Create and delete symbolic links.
 + Stat and rename (or move) files and directories.
 + Change ownership of files and directories. Ownership is stored by user/group name instead of UID and GID. This means multiple MyFS clients do not need their UIDs and GIDs sync'd up, only their names. I'm not sure if this is better or worse honestly, but we'll see. I can always support both methods or go back to only storing UID and GID.
++ Change permissions on files and directories.
 + Configurable logging to syslog and/or stdout.
 + Easy to use installation and setup using the `--create` command line switch and answering prompts.
 + Configurable options for how to handle MariaDB query failures.
 
 ## Not (Yet) Supported Features
 + Hard links.
-+ Change permissions on files and directories.
 
 ## Support
 + FUSE

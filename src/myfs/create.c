@@ -445,6 +445,7 @@ create_get_sql_database_table(char *dst, size_t size) {
                         "    `type` enum('File','Directory','Soft Link') NOT NULL,\n"
                         "    `user` varchar(%u) NOT NULL,\n"
                         "    `group` varchar(%u) NOT NULL,\n"
+                        "    `mode` smallint(5) unsigned NOT NULL,\n"
                         "    `content` longblob NOT NULL,\n"
                         "    `created_on` bigint(20) NOT NULL,\n"
                         "    `last_accessed_on` bigint(20) NOT NULL,\n"

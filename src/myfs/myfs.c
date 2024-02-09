@@ -13,7 +13,7 @@
 
 #define MODULE "MyFS"
 
-//#define MYFS_TRACE
+#define MYFS_TRACE
 #if defined(MYFS_TRACE)
 # define MYFS_LOG_TRACE(fmt, ...)                   \
         do {                                        \
@@ -438,6 +438,11 @@ myfs_chown(const char *path, uid_t uid, gid_t gid, struct fuse_file_info *fi) {
         return -ENOENT;
     }
 
+    //Not allowed to update the root directory.
+    if (file_id == 0) {
+        return -EPERM;
+    }
+
     //uid and gid can be <type of uid_t|gid_t>_MAX or -1, which means don't change them.
     //When testing, Use -1 for robustness.
     user[0] = '\0';
@@ -461,7 +466,6 @@ myfs_chown(const char *path, uid_t uid, gid_t gid, struct fuse_file_info *fi) {
 
     success = myfs_db_file_chown(myfs, file_id, user, group);
     if (!success) {
-        log_err(MODULE, "Error changing owner on File ID %u: %s", file_id, db_error(&myfs->db));
         return -EIO;
     }
 
@@ -472,7 +476,29 @@ myfs_chown(const char *path, uid_t uid, gid_t gid, struct fuse_file_info *fi) {
 
 int
 myfs_chmod(const char *path, mode_t mode, struct fuse_file_info *fi) {
-    MYFS_LOG_TRACE("Begin; Path[%s]; FI[%p]", path, fi);
+    unsigned int file_id;
+    bool success;
+    myfs_t *myfs;
+
+    MYFS_LOG_TRACE("Begin; Path[%s]; Mode[%u}; FI[%p]", path, mode, fi);
+
+    myfs = (myfs_t *)fuse_get_context()->private_data;
+
+    //Get the file from the open file table or the path if it's not open
+    success = myfs_get_file_id(myfs, path, fi, &file_id);
+    if (!success) {
+        return -ENOENT;
+    }
+
+    //Not allowed to update the root directory.
+    if (file_id == 0) {
+        return -EPERM;
+    }
+
+    success = myfs_db_file_chmod(myfs, file_id, mode);
+    if (!success) {
+        return -EIO;
+    }
 
     MYFS_LOG_TRACE("End");
 
@@ -576,8 +602,15 @@ myfs_rmdir(const char *path) {
         return -ENOENT;
     }
 
+    //Not allowed to update the root directory.
+    if (file->file_id == 0) {
+        myfs_file_free(file);
+        return -EPERM;
+    }
+
     if (file->children_count > 0) {
         //The directory is not empty. TODO: possibly allow recursive delete through configuration?
+        myfs_file_free(file);
         return -ENOTEMPTY;
     }
 
@@ -601,7 +634,7 @@ myfs_mkdir(const char *path, mode_t mode) {
     myfs_file_t *parent;
     myfs_t *myfs;
 
-    MYFS_LOG_TRACE("Begin; Path[%s]", path);
+    MYFS_LOG_TRACE("Begin; Path[%s]; Mode[%u]", path, mode);
 
     myfs = (myfs_t *)fuse_get_context()->private_data;
 
@@ -618,7 +651,7 @@ myfs_mkdir(const char *path, mode_t mode) {
     }
 
     //Create the directory in MariaDB.
-    success = myfs_db_file_create(myfs, name, MYFS_FILE_TYPE_DIRECTORY, parent->file_id, NULL);
+    success = myfs_db_file_create(myfs, name, MYFS_FILE_TYPE_DIRECTORY, parent->file_id, mode, NULL);
     myfs_file_free(parent);
 
     if (!success) {
@@ -656,7 +689,7 @@ myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
     }
 
     //Create the file in MariaDB.
-    success = myfs_db_file_create(myfs, name, MYFS_FILE_TYPE_FILE, parent->file_id, NULL);
+    success = myfs_db_file_create(myfs, name, MYFS_FILE_TYPE_FILE, parent->file_id, 0640, NULL);
     myfs_file_free(parent);
 
     if (!success) {
@@ -668,33 +701,6 @@ myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
     if (ret != 0) {
         return ret;
     }
-
-#if 0
-    //Look for the first available file handle.
-    for (fh = 0; fh < MYFS_FILES_OPEN_MAX; fh++) {
-        if (myfs->files[fh] == NULL) {
-            break;
-        }
-    }
-
-    if (fh == MYFS_FILES_OPEN_MAX) {
-        log_err(MODULE, "Error opening file '%s': Maximum number of files are open", path);
-        return -EMFILE;
-    }
-
-    MYFS_LOG_TRACE("Got FileHandle[%zu]", fh);
-
-    file = myfs_file_get(myfs, path, false);
-    if (file == NULL) {
-        return -ENOENT;
-    }
-
-    //Put the file into the open files table
-    myfs->files[fh] = file;
-
-    //Put the file handle into Fuse's file info struct so we can get it in other file operations
-    fi->fh = fh;
-#endif
 
     MYFS_LOG_TRACE("End");
 
@@ -968,7 +974,7 @@ myfs_symlink(const char *target, const char *path) {
         return -ENOENT;
     }
 
-    success = myfs_db_file_create(myfs, name, MYFS_FILE_TYPE_SOFT_LINK, parent->file_id, target);
+    success = myfs_db_file_create(myfs, name, MYFS_FILE_TYPE_SOFT_LINK, parent->file_id, 0777, target);
     myfs_file_free(parent);
 
     if (!success) {
