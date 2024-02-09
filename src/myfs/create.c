@@ -73,7 +73,7 @@ create_run_prompt(create_params_t *params) {
     //Prompt for the mount point.
     while (true) {
         printf("\n");
-        util_create_prompt(input, sizeof(input), "Mount Point [%s]", params->mount);
+        util_create_prompt(input, sizeof(input), "Mount point[%s]", params->mount);
         if (input[0] != '\0') {
             strlcpy(params->mount, input, sizeof(params->mount));
             printf("  Mount changed to '%s'.\n", params->mount);
