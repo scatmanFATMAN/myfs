@@ -5,7 +5,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <unistd.h>
 #include <string.h>
+#include <time.h>
 #include "db.h"
 
 bool
@@ -13,6 +15,9 @@ db_connect(db_t *db, const char *host, const char *user, const char *password, c
     my_bool reconnect = 1;
 
     mysql_init(&db->mysql);
+
+    db->failed_query_retry_wait = -1;       //Do not retry.
+    db->failed_query_retry_count = -1;      //Retry forever (if retry_count != -1).
 
     //Enable auto reconnect and auto retry if a query fails.
     mysql_optionsv(&db->mysql, MYSQL_OPT_RECONNECT, (void *)&reconnect);
@@ -30,22 +35,70 @@ db_disconnect(db_t *db) {
     mysql_close(&db->mysql);
 }
 
+void
+db_set_failed_query_options(db_t *db, int retry_wait, int retry_count) {
+    db->failed_query_retry_wait = retry_wait;
+    db->failed_query_retry_count = retry_count;
+}
+
 const char *
 db_error(db_t *db) {
     return db->error;
 }
 
-bool
-db_query(db_t *db, const char *query, int len) {
-    int ret;
+/**
+ * Run a query and optionally retry if the query fails if `failed_query_retry_wait`
+ * and `failed_query_retry_count` are set.
+ */
+static bool
+db_query_timed(db_t *db, const char *query, int len) {
+    time_t next_try = 0;
+    int count = 0, ret;
 
-    ret = mysql_real_query(&db->mysql, query, len);
-    if (ret != 0) {
-        snprintf(db->error, sizeof(db->error), "%s", mysql_error(&db->mysql));
-        return false;
+    while (true) {
+        //If `next_try` > 0, then a previous query failed.
+        //Check to see if it's time to try the query again. If no, sleep for 50ms and check the timer again.
+        if (next_try > time(NULL)) {
+            usleep(1000 * 50);
+            continue;
+        }
+
+        next_try = 0;
+        ret = mysql_real_query(&db->mysql, query, len);
+
+        //If `ret` is 0, then the query succeeded. If so, reset the error in case a previous query failed.
+        if (ret == 0) {
+            db->error[0] = '\0';
+            break;
+        }
+
+        //Error! Figure out what to do.
+
+        //If `failed_query_retry_wait` is -1, do not retry again.
+        if (db->failed_query_retry_wait == -1) {
+            snprintf(db->error, sizeof(db->error), "%s", mysql_error(&db->mysql));
+            break;
+        }
+
+        //See if the max number of failed queries has been acheieved. If so, do not retry again.
+        //-1 means retry forever
+        if (db->failed_query_retry_count != -1) {
+            if (++count >= db->failed_query_retry_count) {
+                snprintf(db->error, sizeof(db->error), "%s", mysql_error(&db->mysql));
+                break;
+            }
+        }
+
+        //Set the timer for when to retry next.
+        next_try = time(NULL) + db->failed_query_retry_wait;
     }
 
-    return true;
+    return ret == 0;
+}
+
+bool
+db_query(db_t *db, const char *query, int len) {
+    return db_query_timed(db, query, len);
 }
 
 bool
@@ -68,11 +121,10 @@ db_queryf(db_t *db, const char *fmt, ...) {
 MYSQL_RES *
 db_select(db_t *db, const char *query, int len) {
     MYSQL_RES *res;
-    int ret;
+    bool success;
 
-    ret = mysql_real_query(&db->mysql, query, len);
-    if (ret != 0) {
-        snprintf(db->error, sizeof(db->error), "%s", mysql_error(&db->mysql));
+    success = db_query_timed(db, query, len);
+    if (!success) {
         return NULL;
     }
 
@@ -83,7 +135,6 @@ db_select(db_t *db, const char *query, int len) {
     }
 
     return res;
-
 }
 
 MYSQL_RES *
@@ -145,27 +196,21 @@ db_user_exists(db_t *db, const char *user, const char *host, bool *exists) {
 
 bool
 db_transaction_start(db_t *db) {
-    return db_queryf(db, "START TRANSACTION");
+    return db_query(db, "START TRANSACTION", 17);
 }
 
 bool
 db_transaction_stop(db_t *db, bool commit) {
-    my_bool success;
+    bool success;
 
     if (commit) {
-        success = mysql_commit(&db->mysql);
-        if (success != 0) {
-            snprintf(db->error, sizeof(db->error), "Commit: %s", mysql_error(&db->mysql));
-        }
+        success = db_query(db, "COMMIT", 6);
     }
     else {
-        success = mysql_rollback(&db->mysql);
-        if (success != 0) {
-            snprintf(db->error, sizeof(db->error), "Rollback: %s", mysql_error(&db->mysql));
-        }
+        success = db_query(db, "ROLLBACK", 8);
     }
 
-    return success == 0;
+    return success;
 }
 
 char *

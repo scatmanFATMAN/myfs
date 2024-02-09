@@ -275,11 +275,11 @@ create_run_create_config(create_params_t *params) {
         return false;
     }
 
-    fprintf(f, "Number of seconds to wait before re-trying a failed query. -1 means do not retry.\n");
-    fprintf(f, "failed_query_retry_wait = %d\n", config_get_int("failed_query_retry_wait"));
-    fprintf(f, "\n");
-    fprintf(f, "# The total number of failed queries to retry. -1 means do not retry. 0 means retry forever.\n");
+    fprintf(f, "# Number of seconds to wait before retrying a failed query. -1 means do not retry.\n");
     fprintf(f, "failed_query_retry_count = %d\n", config_get_int("failed_query_retry_count"));
+    fprintf(f, "\n");
+    fprintf(f, "# The total number of failed queries to retry. If `retry_wait` is -1, this option is ignored. -1 means retry forever.\n");
+    fprintf(f, "failed_query_retry_wait = %d\n", config_get_int("failed_query_retry_wait"));
     fprintf(f, "\n");
     fprintf(f, "# Whether or not to log to the console.\n");
     fprintf(f, "log_stdout = true\n");

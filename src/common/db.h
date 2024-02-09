@@ -13,8 +13,10 @@
  * The database context.
  */
 typedef struct {
-    MYSQL mysql;        //!< The handle to MariaDB and libmysqlclient.
-    char error[256];    //!< Any error text.
+    MYSQL mysql;                    //!< The handle to MariaDB and libmysqlclient.
+    int failed_query_retry_wait;    //!< Number of seconds to wait before re-trying a failed query.
+    int failed_query_retry_count;   //!< The total number of failed queries to retry.
+    char error[256];                //!< Any error text.
 } db_t;
 
 /**
@@ -36,6 +38,15 @@ bool db_connect(db_t *db, const char *host, const char *user, const char *passwo
  * @param[in] db The database context.
  */
 void db_disconnect(db_t *db);
+
+/**
+ * Sets options for what to do when a query fails.
+ *
+ * @param[in] db The database context.
+ * @param[in] retry_wait Number of seconds to wait before retrying a failed query. -1 means do not retry.
+ * @param[in] retry_count The total number of failed queries to retry. If `retry_wait` is -1, this option is ignored. -1 means retry forever.
+ */
+void db_set_failed_query_options(db_t *db, int retry_wait, int retry_count);
 
 /**
  * Returns the last error message. If no error has occurred, a blank string will be returned. The

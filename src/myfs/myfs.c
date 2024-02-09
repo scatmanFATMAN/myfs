@@ -143,6 +143,9 @@ myfs_connect(myfs_t *myfs) {
     if (!success) {
         log_err(MODULE, "Error connecting to MariaDB: %s", db_error(&myfs->db));
     }
+    else {
+        db_set_failed_query_options(&myfs->db, config_get_int("failed_query_retry_wait"), config_get_int("failed_query_retry_count"));
+    }
 
     return success;
 }

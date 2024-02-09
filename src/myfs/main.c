@@ -78,10 +78,71 @@ config_handle_log_syslog(const char *name, const char *value) {
     return true;
 }
 
+static char **
+fargs_get(const char *name, int *fargc) {
+    int index = 0;
+    char **fargv;
+
+    //Space for the program name, just like argc[0]
+    *fargc = 1;
+
+    //If --mount is being used, then we need to replicate FUSE's -f option
+    if (config_has("mount")) {
+        *fargc += 2;
+    }
+
+    fargv = calloc(*fargc, sizeof(char *));
+
+    //Start with argv[0], the program name
+    fargv[index++] = strdup(name);
+
+    //Replicate -f if needed
+    if (config_has("mount")) {
+        fargv[index++] = strdup("-f");
+        fargv[index++] = config_dupe("mount");
+    }
+
+    return fargv;
+}
+
+static void
+fargs_free(int fargc, char **fargv) {
+    int i;
+
+    for (i = 0; i < fargc; i++) {
+        free(fargv[i]);
+    }
+
+    free(fargv);
+}
+
+static bool
+check_config() {
+    int failed_query_retry_wait, failed_query_retry_count;
+
+    //failed_query_retry_wait:  -1 means do not retry.
+    //failed_query_retry_count: -1 means retry forever.
+
+    failed_query_retry_wait = config_get_int("failed_query_retry_wait");
+    failed_query_retry_count = config_get_int("failed_query_retry_count");
+
+    if (failed_query_retry_wait < -1) {
+        log_err(MODULE, "Config error: failed_query_retry_wait[%d] cannot be less than -1", failed_query_retry_wait);
+        return false;
+    }
+
+    if (failed_query_retry_count < -1) {
+        log_err(MODULE, "Config error: failed_query_retry_count[%d] cannot be less than -1", failed_query_retry_count);
+        return false;
+    }
+
+    return true;
+}
+
 int
 main(int argc, char **argv) {
     struct fuse_operations operations;
-    int i, fargc, ret = 0;
+    int fargc, ret = 0;
     char **fargv;
     bool success;
     myfs_t myfs;
@@ -98,8 +159,8 @@ main(int argc, char **argv) {
     //Set default config options.
     config_set_default("config_file",                   "--config-file",                NULL,                        "/etc/myfs.d/myfs.conf",   NULL,                            "The MariaDB database name.");
     config_set_default_bool("create",                   "--create",                     NULL,                        false,                     config_handle_create,            "Runs the process to create a new MyFS database and exits.");
-    config_set_default_int("failed_query_retry_wait",   "--failed-query-retry-wait",    "failed_query_retry_wait",   -1,                        NULL,                            "Number of seconds to wait before re-trying a failed query. -1 means do not retry.");
-    config_set_default_int("failed_query_retry_count",  "--failed-query-retry-count",   "failed_query_retry_count",  -1,                        NULL,                            "The total number of failed queries to retry. -1 means do not retry. 0 means retry forever.");
+    config_set_default_int("failed_query_retry_wait",   "--failed-query-retry-wait",    "failed_query_retry_wait",   -1,                        NULL,                            "Number of seconds to wait before retrying a failed query. -1 means do not retry.");
+    config_set_default_int("failed_query_retry_count",  "--failed-query-retry-count",   "failed_query_retry_count",  -1,                        NULL,                            "The total number of failed queries to retry. If `retry_wait` is -1, this option is ignored. -1 means retry forever.");
     config_set_default_bool("log_stdout",               "--log-stdout",                 "log_stdout",                true,                      config_handle_log_stdout,        "Whether or not to log to stdout.");
     config_set_default_bool("log_syslog",               "--log-syslog",                 "log_syslog",                false,                     config_handle_log_syslog,        "Whether or not to log to syslog.");
     config_set_default("mariadb_database",              "--mariadb-database",           "mariadb_database",          "myfs",                    NULL,                            "The MariaDB database name.");
@@ -117,7 +178,8 @@ main(int argc, char **argv) {
 
     success = config_read_command_line(argc, argv, true) &&
               config_read_file(config_get("config_file")) &&
-              config_read_command_line(argc, argv, false);
+              config_read_command_line(argc, argv, false) &&
+              check_config();
 
     if (!success) {
         ret = 1;
@@ -164,26 +226,11 @@ main(int argc, char **argv) {
         //Since MyFS has its own command line arguments, create a new argc/argv duo for FUSE. If we don't,
         //FUSE will choke on MyFS's command line arguments. Likewise, MyFS will choke on FUSE arguments.
         //all we really care about is -f <mount point>
-
-        //Only need 3 arguments max
-        fargv = calloc(3, sizeof(char *));
-
-        //Start with argv[0], the program name
-        fargc = 1;
-        fargv[0] = strdup(argv[0]);
-
-        //If --mount was passed in, translate it to FUSE's -f
-        if (config_has("mount")) {
-            fargv[fargc++] = strdup("-f");
-            fargv[fargc++] = config_dupe("mount");
-        }
+        fargv = fargs_get(argv[0], &fargc);
 
         ret = fuse_main(fargc, fargv, &operations, &myfs);
 
-        for (i = 0; i < fargc; i++) {
-            free(fargv[i]);
-        }
-        free(fargv);
+        fargs_free(fargc, fargv);
 
         log_info(MODULE, "Goodbye");
     }
