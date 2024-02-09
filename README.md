@@ -23,11 +23,11 @@ There are two ways to setup MyFS.
   
 2) Manual Setup
    
-  + The config file in `etc/myfs.d/myfs.conf` from this repository goes into `/etc/myfs.d/myfs.conf` on the file system. Update the configuration file with your configuration. You may rename it to whatever you want.
-  + Create the MariaDB database and user.
-    + Run `myfs --print-create-sql` to get the SQL statements needed to run.
-  + Create the mount point.
-  + Run `myfs --config-file <path-to-config-file>`
+    + The config file in `etc/myfs.d/myfs.conf` from this repository goes into `/etc/myfs.d/myfs.conf` on the file system, and may be renamed to whatever you'd like. Update that configuration file with your configuration.
+    + Create the MariaDB database and user.
+      + Run `myfs --print-create-sql` to get the SQL statements needed to run.
+    + Create the mount point.
+    + Run `myfs --config-file <path-to-config-file>`
 
 ## Supported Features
 + Open, close, read, write, and truncate files.
