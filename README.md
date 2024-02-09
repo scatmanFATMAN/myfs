@@ -18,7 +18,7 @@ MyFS currently only works on Linux and runs as whatever user/group started the f
 There are two ways to setup MyFS.
 1) Assisted Setup
   
-    + You can use ```myfs --create true``` to have MyFS prompt you for setup configurations. It will install the configuration file and create the database and user automatically for you.
+    + You can use ```myfs --create true``` to have MyFS prompt you for setup configurations. It will create and install the configuration file, create the database and user, and create the mount point (if needed) for you.
     + Run ```myfs --config-file <path-to-config-file>```
   
 2) Manual Setup
@@ -29,36 +29,18 @@ There are two ways to setup MyFS.
   + Create the mount point.
   + Run ```myfs --config-file <path-to-config-file>```
 
-## Features and Dreams (Maybe Some Hopes)
-- [x] Core code, configuration, integrating FUSE and MariaDB.
-- [ ] Implement all basic file system operations that FUSE supports.
-    - [x] General
-      - [x] Stat
-      - [x] Rename
-      - [ ] Change Ownership
-      - [ ] Change Permissions
-      - [ ] Locking
-    - [x] Files
-      - [x] Create
-      - [x] Delete
-      - [x] Open/Close
-      - [x] Read
-      - [x] Write
-      - [x] Truncate
-      - [ ] Seek
-  - [x] Directories
-      - [x] Create
-      - [x] Delete
-      - [x] Listing
-  - [x] Symbolic Links
-      - [x] Create
-      - [x] Delete
-      - [x] Read
-- [x]  Advanced and configurable logging to syslog or other interfaces.
-- [x]  Handle MariaDB query failures/retries. Block forever like NFS? This is important.
-- [x]  Command line switch or application to setup the initial database.
-- [ ]  Create RPM and Deb packages.
-- [ ]  Support and test more configuration.
+## Supported Features
++ Open, close, read, write, and truncate files.
++ Create, delete, and list directories.
++ Create and delete symbolic links.
++ Stat and rename (or move) files and directories.
++ Configurable logging to syslog and/or stdout.
++ Easy to use installation and setup using the ```--create``` command line switch and answering prompts.
++ Configurable options for how to handle MariaDB query failures.
+
+## Not (Yet) Supported Features
++ Change ownership of files and directories.
++ Change permissions on files and directories.
 
 ## Support
 + FUSE
