@@ -5,7 +5,7 @@ MyFS is a user land file system written in C that implements the FUSE API to cre
 
 
 ## How does it work?
-+ It uses libfuse and implements the FUSE C API (https://github.com/libfuse/libfuse).\
++ It uses libfuse and implements the FUSE C API (https://github.com/libfuse/libfuse).
 + It uses libmariadbclient and implements the MariaDB C API to manage the file system in the database (https://mariadb.com/docs/server/connect/programming-languages/c/).
 
 MyFS gets mounted to a mount point like any other file system would. Once mounted, normal Linux commands are used to manage the file system in the MyFS mount point. FUSE passes those commands along to MyFS which then queries MariaDB to create, read, update, and delete data in the database that represent files on the file system. MyFS passes the results back to FUSE, which then presents the changes back to the user as if the changes were made on the actual file system.
@@ -36,13 +36,13 @@ There are two ways to setup MyFS.
 + Stat and rename (or move) files and directories.
 + Change ownership of files and directories. Ownership is stored by user/group name instead of UID and GID. This means multiple MyFS clients do not need their UIDs and GIDs sync'd up, only their names. I'm not sure if this is better or worse honestly, but we'll see. I can always support both methods or go back to only storing UID and GID.
 + Change permissions on files and directories.
-+ Configurable logging to syslog and/or stdout.
-+ Easy to use installation and setup using the `--create` command line switch and answering prompts.
-+ Configurable options for how to handle MariaDB query failures.
++ Uses block/page based data storage for files.
 + Atomic reads and writes using MariaDB transactions.
++ Configurable logging to syslog and/or stdout.
++ Configurable options for how to handle MariaDB query failures.
++ Easy to use installation and setup using the `--create` command line switch and answering prompts.
 
 ## Not (Yet) Supported Features
-+ Switch to a block/page based file storage.
 + Hard links.
 + Auditing FUSE actions and putting them into the database might be cool.
 + Another binary or another config option to run OPTIMIZE TABLE and reclaim disk space. Maybe do it on a schedule.

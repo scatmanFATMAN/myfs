@@ -10,6 +10,15 @@
 #include "util.h"
 #include "create.h"
 
+/** The database engine used by MyFS. */
+#define CREATE_ENGINE "InnoDB"
+
+/** The database charset used by MyFS. */
+#define CREATE_CHARSET "utf8mb4"
+
+/** The database collation used by MyFS. */
+#define CREATE_COLLATE "utf8mb4_general_ci"
+
 typedef struct {
     char config_path[1024];
     char mariadb_host[512];
@@ -511,7 +520,8 @@ create_run() {
 
 void
 create_get_sql_database(char *dst, size_t size, const char *name) {
-    snprintf(dst, size, "CREATE DATABASE `%s`;", name);
+    snprintf(dst, size, "CREATE DATABASE `%s` /*!40100 DEFAULT CHARACTER SET %s COLLATE %s */;",
+                        name, CREATE_CHARSET, CREATE_COLLATE);
 }
 
 void
@@ -530,35 +540,39 @@ create_get_sql_database_table1(char *dst, size_t size) {
                         "    `last_modified_on` bigint(20) NOT NULL,\n"
                         "    `last_status_changed_on` bigint(20) NOT NULL,\n"
                         "    PRIMARY KEY (`file_id`),\n"
+                        "    UNIQUE KEY `uk_files` (`name`,`parent_id`),\n"
                         "    KEY `fk_files_parentid` (`parent_id`),\n"
                         "    CONSTRAINT `fk_files_parentid` FOREIGN KEY (`parent_id`) REFERENCES `files` (`file_id`) ON DELETE CASCADE ON UPDATE CASCADE\n"
-                        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;",
+                        ") ENGINE=%s DEFAULT CHARSET=%s COLLATE=%s;",
                         MYFS_FILE_NAME_MAX_LEN,
                         MYFS_USER_NAME_MAX_LEN,
-                        MYFS_GROUP_NAME_MAX_LEN);
+                        MYFS_GROUP_NAME_MAX_LEN,
+                        CREATE_ENGINE, CREATE_CHARSET, CREATE_COLLATE);
 }
 
 void
 create_get_sql_database_table2(char *dst, size_t size) {
     snprintf(dst, size, "CREATE TABLE `file_data` (\n"
-                        "`file_data_id` int(10) unsigned NOT NULL AUTO_INCREMENT,\n"
-                        "`file_id` int(10) unsigned NOT NULL,\n"
-                        "`index` int(10) unsigned NOT NULL,\n"
-                        "`data` varbinary(%u) NOT NULL,\n"
-                        "PRIMARY KEY (`file_data_id`),\n"
-                        "KEY `fk_filedata_fileid` (`file_id`),\n"
-                        "CONSTRAINT `fk_filedata_fileid` FOREIGN KEY (`file_id`) REFERENCES `files` (`file_id`) ON DELETE CASCADE ON UPDATE CASCADE\n"
-                        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;",
-                        MYFS_FILE_BLOCK_SIZE);
+                        "    `file_data_id` int(10) unsigned NOT NULL AUTO_INCREMENT,\n"
+                        "    `file_id` int(10) unsigned NOT NULL,\n"
+                        "    `index` int(10) unsigned NOT NULL,\n"
+                        "    `data` varbinary(%u) NOT NULL,\n"
+                        "    PRIMARY KEY (`file_data_id`),\n"
+                        "    KEY `fk_filedata_fileid` (`file_id`),\n"
+                        "    CONSTRAINT `fk_filedata_fileid` FOREIGN KEY (`file_id`) REFERENCES `files` (`file_id`) ON DELETE CASCADE ON UPDATE CASCADE\n"
+                        ") ENGINE=%s DEFAULT CHARSET=%s COLLATE=%s;",
+                        MYFS_FILE_BLOCK_SIZE,
+                        CREATE_ENGINE, CREATE_CHARSET, CREATE_COLLATE);
 }
 
 void
 create_get_sql_database_table3(char *dst, size_t size) {
-    strlcpy(dst, "CREATE TABLE `file_protection` (\n"
-                 "    `file_id` int(10) unsigned NOT NULL,\n"
-                 "    PRIMARY KEY (`file_id`),\n"
-                 "    CONSTRAINT `fk_fileprotection_fileid` FOREIGN KEY (`file_id`) REFERENCES `files` (`file_id`) ON UPDATE CASCADE\n"
-                 ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;", size);
+    snprintf(dst, size, "CREATE TABLE `file_protection` (\n"
+                        "    `file_id` int(10) unsigned NOT NULL,\n"
+                        "    PRIMARY KEY (`file_id`),\n"
+                        "    CONSTRAINT `fk_fileprotection_fileid` FOREIGN KEY (`file_id`) REFERENCES `files` (`file_id`) ON UPDATE CASCADE\n"
+                        ") ENGINE=%s DEFAULT CHARSET=%s COLLATE=%s;",
+                        CREATE_ENGINE, CREATE_CHARSET, CREATE_COLLATE);
 }
 
 void

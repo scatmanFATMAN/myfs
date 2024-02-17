@@ -39,7 +39,7 @@ bool myfs_db_file_delete(myfs_t *myfs, unsigned int file_id);
  * @param[in] data The data to write.
  * @param[in] len The total length of `data`.
  * @param[in] offset The offset where to begin writing.
- * @return `true` is the data was added, otherwise `false`.
+ * @return `true` on success, otherwise `false`.
  */
 bool myfs_db_file_write(myfs_t *myfs, unsigned int file_id, const char *data, size_t len, off_t offset);
 
@@ -50,7 +50,7 @@ bool myfs_db_file_write(myfs_t *myfs, unsigned int file_id, const char *data, si
  * @param[in] file_id The File ID of the file to add data to.
  * @param[in] data The data to write.
  * @param[in] len The total length of `data`.
- * @return `true` is the data was added, otherwise `false`.
+ * @return `true` on success, otherwise `false`.
  */
 bool myfs_db_file_append(myfs_t *myfs, unsigned int file_id, const char *data, size_t len);
 

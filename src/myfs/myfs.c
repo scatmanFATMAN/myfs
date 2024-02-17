@@ -296,7 +296,7 @@ myfs_open_helper(const char *path, bool dir, bool truncate, struct fuse_file_inf
             return -EIO;
         }
 
-        file->st.st_size = 0;
+        //file->st.st_size = 0;
     }
 
     //Put the file into the open files table
@@ -414,6 +414,8 @@ myfs_truncate(const char *path, off_t size, struct fuse_file_info *fi) {
     if (!success) {
         return -EIO;
     }
+
+    //file->st.st_size = size;
 
     MYFS_LOG_TRACE("End");
     return 0;
@@ -811,14 +813,22 @@ myfs_write(const char *path, const char *buffer, size_t size, off_t offset, stru
     //Update the file's data
     if (fi->flags & O_APPEND || file->st.st_size == offset) {
         success = myfs_db_file_append(myfs, file->file_id, buffer, size);
+        if (success) {
+            //file->st.st_size += size;
+        }
     }
     else {
         success = myfs_db_file_write(myfs, file->file_id, buffer, size, offset);
+        if (success) {
+            //file->st.st_size += (size - offset);
+        }
     }
 
     if (!success) {
         return -EIO;
     }
+
+    file->st.st_size += size;
 
     MYFS_LOG_TRACE("End");
 
