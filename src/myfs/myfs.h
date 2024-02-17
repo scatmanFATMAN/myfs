@@ -19,6 +19,9 @@
 /** The maximum number of open files. */
 #define MYFS_FILES_OPEN_MAX 128
 
+/** The maxium size of a file data block in bytes. */
+#define MYFS_FILE_BLOCK_SIZE 4096
+
 /** The maximum length of a user name and group name, as specified in Linux's useradd and groupadd programs. */
 #define MYFS_USER_NAME_MAX_LEN  32
 #define MYFS_GROUP_NAME_MAX_LEN 32
@@ -52,8 +55,9 @@ struct myfs_file_t {
  * The MyFS context that will be available in FUSE callbacks.
  */
 typedef struct {
-    db_t db;
-    myfs_file_t *files[MYFS_FILES_OPEN_MAX];
+    db_t db;                                    //!< The database connection.
+    myfs_file_t *files[MYFS_FILES_OPEN_MAX];    //!< An array of open file descriptors for FUSE, indexed by file descriptor.
+    unsigned int max_allowed_packet;            //!< Maximum packet size for MariaDB. Queries will fail if the packet size is larger than this value.
 } myfs_t;
 
 /**

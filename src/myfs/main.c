@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 #define FUSE_USE_VERSION 30
 #include <fuse.h>
 #include "../common/log.h"
@@ -9,6 +10,7 @@
 #include "version.h"
 #include "util.h"
 #include "create.h"
+#include "reclaimer.h"
 #include "myfs.h"
 
 #define MODULE "Main"
@@ -42,6 +44,9 @@ config_handle_print_create_sql(const char *name, const char *value) {
     printf("%s\n", sql);
     printf("\n");
     create_get_sql_database_table2(sql, sizeof(sql));
+    printf("%s\n", sql);
+    printf("\n");
+    create_get_sql_database_table3(sql, sizeof(sql));
     printf("%s\n", sql);
     printf("\n");
     create_get_sql_database_insert1(sql, sizeof(sql));
@@ -169,6 +174,8 @@ confirm_config() {
     printf("\n");
     printf("Database:                 %s@%s:%s/%s\n", config_get("mariadb_user"), config_get("mariadb_host"), config_get("mariadb_port"), config_get("mariadb_database"));
     printf("Mount point:              %s\n", config_get("mount"));
+    printf("User:                     %s\n", config_get("user"));
+    printf("Group:                    %s\n", config_get("group"));
     if (config_equals("failed_query_retry_wait", "-1")) {
         printf("Failed query retry wait:  Not retrying\n");
         printf("Failed query retry count: Not retrying\n");
@@ -181,22 +188,31 @@ confirm_config() {
 
     util_create_prompt(input, sizeof(input), "Confirm settings[y/n]?");
 
-    return strcmp(input, "y") == 0;
+    if (strcmp(input, "y") == 0) {
+        printf("\n");
+        return true;
+    }
+
+    return false;
 }
 
 int
 main(int argc, char **argv) {
+    char user[MYFS_USER_NAME_MAX_LEN + 1], group[MYFS_GROUP_NAME_MAX_LEN + 1];
     struct fuse_operations operations;
     int fargc, ret = MYFS_RETURN_SUCCESS;
     char **fargv;
     bool success;
     myfs_t myfs;
 
+    mysql_library_init(0, NULL, NULL);
     log_init();
     config_init();
-    mysql_library_init(0, NULL, NULL);
+    reclaimer_init();
 
     memset(&myfs, 0, sizeof(myfs));
+    util_username(getuid(), user, sizeof(user));
+    util_groupname(getgid(), group, sizeof(group));
 
     config_set_error_func(config_error);
     config_set_description("%s v%d.%d.%d", VERSION_NAME, VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH);
@@ -206,6 +222,7 @@ main(int argc, char **argv) {
     config_set_default_bool("create",                   "--create",                     NULL,                        false,                     config_handle_create,            "Runs the process to create a new MyFS database and exits.");
     config_set_default_int("failed_query_retry_wait",   "--failed-query-retry-wait",    "failed_query_retry_wait",   -1,                        NULL,                            "Number of seconds to wait before retrying a failed query. -1 means do not retry.");
     config_set_default_int("failed_query_retry_count",  "--failed-query-retry-count",   "failed_query_retry_count",  -1,                        NULL,                            "The total number of failed queries to retry. If `retry_wait` is -1, this option is ignored. -1 means retry forever.");
+    config_set_default("group",                         "--group",                      "group",                     group,                     NULL,                            "The Linux group to create files and directories with. If blank, the current group will be used.");
     config_set_default_bool("log_stdout",               "--log-stdout",                 "log_stdout",                true,                      config_handle_log_stdout,        "Whether or not to log to stdout.");
     config_set_default_bool("log_syslog",               "--log-syslog",                 "log_syslog",                false,                     config_handle_log_syslog,        "Whether or not to log to syslog.");
     config_set_default("mariadb_database",              "--mariadb-database",           "mariadb_database",          "myfs",                    NULL,                            "The MariaDB database name.");
@@ -215,6 +232,7 @@ main(int argc, char **argv) {
     config_set_default("mariadb_user",                  "--mariadb-user",               "mariadb_user",              "myfs",                    NULL,                            "The MariaDB user.");
     config_set_default("mount",                         "--mount",                      "mount",                     "/mnt/myfs",               NULL,                            "The mount point for the file system.");
     config_set_default_bool("print_create_sql",         "--print-create-sql",           NULL,                        false,                     config_handle_print_create_sql,  "Prints the SQL statements needed to create a MyFS database and exits.");
+    config_set_default("user",                          "--user",                       "user",                      user,                      NULL,                            "The Linux user to create files and directories with. If blank, the current user will be used.");
 
     //These command line configs should be parsed before the config file.
     config_set_priority("config_file");
@@ -279,6 +297,7 @@ main(int argc, char **argv) {
         //all we really care about is -f <mount point>
         fargv = fargs_get(argv[0], &fargc);
 
+        log_info(MODULE, "Running");
         ret = fuse_main(fargc, fargv, &operations, &myfs);
 
         fargs_free(fargc, fargv);
@@ -289,9 +308,10 @@ main(int argc, char **argv) {
 done:
     myfs_disconnect(&myfs);
 
-    mysql_library_end();
+    reclaimer_free();
     config_free();
     log_free();
+    mysql_library_end();
 
     return ret;
 }

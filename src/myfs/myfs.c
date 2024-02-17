@@ -176,16 +176,40 @@ myfs_file_exists(myfs_t *myfs, const char *path, bool *exists) {
 bool
 myfs_connect(myfs_t *myfs) {
     bool success;
+    MYSQL_RES *res;
+    MYSQL_ROW row;
 
     success = db_connect(&myfs->db, config_get("mariadb_host"), config_get("mariadb_user"), config_get("mariadb_password"), config_get("mariadb_database"),config_get_uint("mariadb_port"));
 
     if (!success) {
         log_err(MODULE, "Error connecting to MariaDB: %s", db_error(&myfs->db));
-    }
-    else {
-        db_set_failed_query_options(&myfs->db, config_get_int("failed_query_retry_wait"), config_get_int("failed_query_retry_count"));
+        return false;
     }
 
+    db_set_failed_query_options(&myfs->db, config_get_int("failed_query_retry_wait"), config_get_int("failed_query_retry_count"));
+
+    //Query to get MariaDB's max_allowed_packet variable.
+    res = db_select(&myfs->db, "SHOW VARIABLES LIKE 'max_allowed_packet'", 40);
+    if (res == NULL) {
+        log_err(MODULE, "Error getting 'max_allowed_packet' variable: %s", db_error(&myfs->db));
+        return false;
+    }
+
+    row = mysql_fetch_row(res);
+    if (row == NULL) {
+        log_err(MODULE, "Error getting 'max_allowed_packet' variable: Not found");
+        success = false;
+    }
+    else if (row[1] == NULL) {
+        log_err(MODULE, "Error getting 'max_allowed_packet' variable: Value is NULL");
+        success = false;
+    }
+    else {
+        myfs->max_allowed_packet = strtoul(row[1], NULL, 10);
+        log_info(MODULE, "'max_allowed_packet' is %u", myfs->max_allowed_packet);
+    }
+
+    mysql_free_result(res);
     return success;
 }
 
@@ -266,7 +290,7 @@ myfs_open_helper(const char *path, bool dir, bool truncate, struct fuse_file_inf
 
     //If a file is being opened, truncate if asked.
     if (!dir && truncate) {
-        success = myfs_db_file_set_content_size(myfs, file->file_id, 0);
+        success = myfs_db_file_truncate(myfs, file->file_id, 0);
         if (!success) {
             myfs_file_free(file);
             return -EIO;
@@ -386,7 +410,7 @@ myfs_truncate(const char *path, off_t size, struct fuse_file_info *fi) {
     //Get the file from the open file table
     file = myfs->files[fi->fh];
 
-    success = myfs_db_file_set_content_size(myfs, file->file_id, size);
+    success = myfs_db_file_truncate(myfs, file->file_id, size);
     if (!success) {
         return -EIO;
     }
@@ -630,7 +654,7 @@ int
 myfs_mkdir(const char *path, mode_t mode) {
     char dir[MYFS_PATH_NAME_MAX_LEN + 1];
     char name[MYFS_FILE_NAME_MAX_LEN + 1];
-    bool success;
+    unsigned int file_id;
     myfs_file_t *parent;
     myfs_t *myfs;
 
@@ -651,10 +675,10 @@ myfs_mkdir(const char *path, mode_t mode) {
     }
 
     //Create the directory in MariaDB.
-    success = myfs_db_file_create(myfs, name, MYFS_FILE_TYPE_DIRECTORY, parent->file_id, mode, NULL);
+    file_id = myfs_db_file_create(myfs, name, MYFS_FILE_TYPE_DIRECTORY, parent->file_id, mode);
     myfs_file_free(parent);
 
-    if (!success) {
+    if (file_id == 0) {
         return -EIO;
     }
 
@@ -667,7 +691,7 @@ int
 myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
     char dir[MYFS_PATH_NAME_MAX_LEN + 1];
     char name[MYFS_FILE_NAME_MAX_LEN + 1];
-    bool success;
+    unsigned int file_id;
     int ret;
     myfs_file_t *parent;
     myfs_t *myfs;
@@ -689,10 +713,10 @@ myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
     }
 
     //Create the file in MariaDB.
-    success = myfs_db_file_create(myfs, name, MYFS_FILE_TYPE_FILE, parent->file_id, 0640, NULL);
+    file_id = myfs_db_file_create(myfs, name, MYFS_FILE_TYPE_FILE, parent->file_id, 0640);
     myfs_file_free(parent);
 
-    if (!success) {
+    if (file_id == 0) {
         return -EIO;
     }
 
@@ -956,6 +980,7 @@ myfs_rename(const char *path_old, const char *path_new, unsigned int flags) {
 int
 myfs_symlink(const char *target, const char *path) {
     char dir[MYFS_PATH_NAME_MAX_LEN + 1], name[MYFS_FILE_NAME_MAX_LEN + 1];
+    unsigned int file_id;
     myfs_file_t *parent;
     myfs_t *myfs;
     bool success;
@@ -974,9 +999,14 @@ myfs_symlink(const char *target, const char *path) {
         return -ENOENT;
     }
 
-    success = myfs_db_file_create(myfs, name, MYFS_FILE_TYPE_SOFT_LINK, parent->file_id, 0777, target);
+    file_id = myfs_db_file_create(myfs, name, MYFS_FILE_TYPE_SOFT_LINK, parent->file_id, 0777);
     myfs_file_free(parent);
 
+    if (file_id == 0) {
+        return -EIO;
+    }
+
+    success = myfs_db_file_add_data(myfs, file_id, target, strlen(target));
     if (!success) {
         return -EIO;
     }
@@ -990,8 +1020,8 @@ int
 myfs_readlink(const char *path, char *buf, size_t size) {
     myfs_file_t *file;
     myfs_t *myfs;
-    char *content;
-    size_t content_len;
+    char *data;
+    size_t data_len;
 
     MYFS_LOG_TRACE("Begin; Path[%s]; Size[%zu]", path, size);
 
@@ -1007,23 +1037,23 @@ myfs_readlink(const char *path, char *buf, size_t size) {
         return -EINVAL;
     }
 
-    content = myfs_db_file_get_content(myfs, file->file_id, &content_len);
+    data = myfs_db_file_get_data(myfs, file->file_id, &data_len);
     myfs_file_free(file);
 
-    if (content == NULL) {
+    if (data == NULL) {
         return -EIO;
     }
 
-    //Truncate the content if it's larger than the buffer size (which includes space for '\0').
-    //Increase the content length by 1 to include the '\0' which makes math easier.
-    content_len++;
-    if (content_len > size) {
-        content_len = size;
-        content[content_len - 1] = '\0';
+    //Truncate the data if it's larger than the buffer size (which includes space for '\0').
+    //Increase the data length by 1 to include the '\0' which makes math easier.
+    data_len++;
+    if (data_len > size) {
+        data_len = size;
+        data[data_len - 1] = '\0';
     }
 
-    memcpy(buf, content, content_len);
-    free(content);
+    memcpy(buf, data, data_len);
+    free(data);
 
     MYFS_LOG_TRACE("End");
     return 0;

@@ -9,6 +9,7 @@ obj=$(common)/config.o \
 	main.o \
 	myfs.o \
 	myfs_db.o \
+	reclaimer.o \
 	util.o
 
 cc=gcc

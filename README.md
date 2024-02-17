@@ -30,7 +30,7 @@ There are two ways to setup MyFS.
     + Run `myfs --config-file <path-to-config-file>`
 
 ## Supported Features
-+ Open, close, read, write, and truncate files.
++ Create, delete, open, close, read, write, and truncate files.
 + Create, delete, and list directories.
 + Create and delete symbolic links.
 + Stat and rename (or move) files and directories.
@@ -39,9 +39,14 @@ There are two ways to setup MyFS.
 + Configurable logging to syslog and/or stdout.
 + Easy to use installation and setup using the `--create` command line switch and answering prompts.
 + Configurable options for how to handle MariaDB query failures.
++ Atomic reads and writes using MariaDB transactions.
 
 ## Not (Yet) Supported Features
++ Switch to a block/page based file storage.
 + Hard links.
++ Auditing FUSE actions and putting them into the database might be cool.
++ Another binary or another config option to run OPTIMIZE TABLE and reclaim disk space. Maybe do it on a schedule.
++ Encryption? However this can be achieved through MariaDB native encryption very easily.
 
 ## Support
 + FUSE

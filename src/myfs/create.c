@@ -383,8 +383,16 @@ create_run_create_database(create_params_t *params) {
         return false;
     }
 
-    //Create the `file_protection` table
+    //Create the `file_data` table
     create_get_sql_database_table2(sql, sizeof(sql));
+    success = db_queryf(&params->db, "%s", sql);
+    if (!success) {
+        printf("  Error creating table 'file_data': %s\n", db_error(&params->db));
+        return false;
+    }
+
+    //Create the `file_protection` table
+    create_get_sql_database_table3(sql, sizeof(sql));
     success = db_queryf(&params->db, "%s", sql);
     if (!success) {
         printf("  Error creating table 'file_protection': %s\n", db_error(&params->db));
@@ -486,8 +494,8 @@ create_run() {
     strcpy(params.mariadb_database, config_get("mariadb_database"));
     strcpy(params.mariadb_port, config_get("mariadb_port"));
     strcpy(params.mount, config_get("mount"));
-    util_username(getuid(), params.user, sizeof(params.user));
-    util_groupname(getgid(), params.group, sizeof(params.group));
+    strcpy(params.user, config_get("user"));
+    strcpy(params.group, config_get("group"));
 
     success = create_run_prompt(&params) &&
               create_run_create_config(&params) &&
@@ -516,7 +524,7 @@ create_get_sql_database_table1(char *dst, size_t size) {
                         "    `user` varchar(%u) NOT NULL,\n"
                         "    `group` varchar(%u) NOT NULL,\n"
                         "    `mode` smallint(5) unsigned NOT NULL,\n"
-                        "    `content` longblob NOT NULL,\n"
+                        "    `size` bigint(20) unsigned NOT NULL,\n"
                         "    `created_on` bigint(20) NOT NULL,\n"
                         "    `last_accessed_on` bigint(20) NOT NULL,\n"
                         "    `last_modified_on` bigint(20) NOT NULL,\n"
@@ -532,6 +540,20 @@ create_get_sql_database_table1(char *dst, size_t size) {
 
 void
 create_get_sql_database_table2(char *dst, size_t size) {
+    snprintf(dst, size, "CREATE TABLE `file_data` (\n"
+                        "`file_data_id` int(10) unsigned NOT NULL AUTO_INCREMENT,\n"
+                        "`file_id` int(10) unsigned NOT NULL,\n"
+                        "`index` int(10) unsigned NOT NULL,\n"
+                        "`data` varbinary(%u) NOT NULL,\n"
+                        "PRIMARY KEY (`file_data_id`),\n"
+                        "KEY `fk_filedata_fileid` (`file_id`),\n"
+                        "CONSTRAINT `fk_filedata_fileid` FOREIGN KEY (`file_id`) REFERENCES `files` (`file_id`) ON DELETE CASCADE ON UPDATE CASCADE\n"
+                        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;",
+                        MYFS_FILE_BLOCK_SIZE);
+}
+
+void
+create_get_sql_database_table3(char *dst, size_t size) {
     strlcpy(dst, "CREATE TABLE `file_protection` (\n"
                  "    `file_id` int(10) unsigned NOT NULL,\n"
                  "    PRIMARY KEY (`file_id`),\n"

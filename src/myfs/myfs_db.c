@@ -9,29 +9,14 @@
 
 #define MODULE "MyFS DB"
 
-bool
-myfs_db_file_create(myfs_t *myfs, const char *name, myfs_file_type_t type, unsigned int parent_id, mode_t mode, const char *content) {
-    char user[MYFS_USER_NAME_MAX_LEN + 1], group[MYFS_GROUP_NAME_MAX_LEN + 1];
-    char *name_esc, *user_esc, *group_esc, *content_esc;
+unsigned int
+myfs_db_file_create(myfs_t *myfs, const char *name, myfs_file_type_t type, unsigned int parent_id, mode_t mode) {
+    char *name_esc, *user_esc, *group_esc;
     bool success;
-    struct fuse_context *fuse;
-
-    fuse = fuse_get_context();
-
-    util_username(fuse->uid, user, sizeof(user));
-    util_groupname(fuse->gid, group, sizeof(group));
 
     name_esc = db_escape(&myfs->db, name, NULL);
-    user_esc = db_escape(&myfs->db, user, NULL);
-    group_esc = db_escape(&myfs->db, group, NULL);
-
-    //Files get a blank string while directories and other file types get NULL
-    if (type == MYFS_FILE_TYPE_DIRECTORY || content == NULL) {
-        content_esc = strdup("");
-    }
-    else {
-        content_esc = db_escape(&myfs->db, content, NULL);
-    }
+    user_esc = db_escape(&myfs->db, config_get("user"), NULL);
+    group_esc = db_escape(&myfs->db, config_get("group"), NULL);
 
     switch (type) {
         case MYFS_FILE_TYPE_FILE:
@@ -53,20 +38,20 @@ myfs_db_file_create(myfs_t *myfs, const char *name, myfs_file_type_t type, unsig
             break;
     }
 
-    success = db_queryf(&myfs->db, "INSERT INTO `files` (`parent_id`,`name`,`type`,`user`,`group`,`mode`,`content`,`created_on`,`last_accessed_on`,`last_modified_on`,`last_status_changed_on`)\n"
-                                   "VALUES (%u,'%s','%s','%s','%s',%u,'%s',UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP())",
-                                   parent_id, name_esc, myfs_file_type_str(type), user_esc, group_esc, mode, content_esc);
+    success = db_queryf(&myfs->db, "INSERT INTO `files` (`parent_id`,`name`,`type`,`user`,`group`,`mode`,`size`,`created_on`,`last_accessed_on`,`last_modified_on`,`last_status_changed_on`)\n"
+                                   "VALUES (%u,'%s','%s','%s','%s',%u,0,UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP())",
+                                   parent_id, name_esc, myfs_file_type_str(type), user_esc, group_esc, mode);
 
     free(name_esc);
     free(user_esc);
     free(group_esc);
-    free(content_esc);
 
     if (!success) {
         log_err(MODULE, "Error creating file '%s' with Parent ID %u: %s", name, parent_id, db_error(&myfs->db));
+        return 0;
     }
 
-    return success;
+    return db_insert_id(&myfs->db);
 }
 
 bool
@@ -81,6 +66,54 @@ myfs_db_file_delete(myfs_t *myfs, unsigned int file_id) {
 
     if (!success) {
         log_err(MODULE, "Error deleting File ID %u: %s", file_id, db_error(&myfs->db));
+    }
+
+    return success;
+}
+
+bool
+myfs_db_file_add_data(myfs_t *myfs, unsigned int file_id, const char *data, size_t len) {
+    char *data_esc;
+    bool success;
+    unsigned int index = 0;
+    MYSQL_RES *res;
+    MYSQL_ROW row;
+
+    res = db_selectf(&myfs->db, "SELECT MAX(`index`)+1\n"
+                                "FROM `file_data`\n"
+                                "WHERE `file_id`=%u",
+                                file_id);
+
+    if (res == NULL) {
+        log_err(MODULE, "Error adding data for File ID %u: Failed getting next index: %s", file_id, db_error(&myfs->db));
+        return false;
+    }
+
+    row = mysql_fetch_row(res);
+    if (row != NULL) {
+        index = strtoul(row[0], NULL, 10);
+    }
+    mysql_free_result(res);
+
+    data_esc = db_escape_len(&myfs->db, data, len);
+
+    success = db_queryf(&myfs->db, "INSERT INTO `file_data` (`file_id`,`index`,`data`)\n"
+                                   "VALUES (%u,%u,'%s')",
+                                   file_id, index, data_esc);
+
+    free(data_esc);
+
+    if (!success) {
+        log_err(MODULE, "Error adding data for File ID %u: Failed adding block: %s", file_id, db_error(&myfs->db));
+        return false;
+    }
+
+    success = db_queryf(&myfs->db, "UPDATE `files`\n"
+                                   "SET `size`=`size`+%zu",
+                                   len);
+
+    if (!success) {
+        log_err(MODULE, "Error adding data for File ID %u: Failed updating the file size", file_id, db_error(&myfs->db));
     }
 
     return success;
@@ -239,7 +272,7 @@ myfs_db_file_rename(myfs_t *myfs, unsigned int file_id, unsigned int parent_id, 
 }
 
 char *
-myfs_db_file_get_content(myfs_t *myfs, unsigned int file_id, size_t *len) {
+myfs_db_file_get_data(myfs_t *myfs, unsigned int file_id, size_t *len) {
     MYSQL_RES *res;
     MYSQL_ROW row;
     char *content = NULL;
@@ -267,21 +300,29 @@ myfs_db_file_get_content(myfs_t *myfs, unsigned int file_id, size_t *len) {
 }
 
 bool
-myfs_db_file_set_content_size(myfs_t *myfs, unsigned int file_id, off_t size) {
+myfs_db_file_truncate(myfs_t *myfs, unsigned int file_id, off_t size) {
     MYSQL_RES *res;
     MYSQL_ROW row;
-    off_t current_size = -1, diff;
+    off_t current_size = -1, diff, write_size, file_data_length, left;
+    unsigned int file_data_id, index = 0;
     bool success;
 
+    success = db_transaction_start(&myfs->db);
+    if (!success) {
+        log_err(MODULE, "Error truncating File ID %u: Failed to start transaction: %s", file_id, db_error(&myfs->db));
+        return false;
+    }
+
     //First, get the current size of the content so we know if we need to shrink, grow, or do nothing.
-    res = db_selectf(&myfs->db, "SELECT LENGTH(`content`)\n"
+    res = db_selectf(&myfs->db, "SELECT `size`\n"
                                 "FROM `files`\n"
                                 "WHERE `file_id`=%u",
                                 file_id);
 
     if (res == NULL) {
-        log_err(MODULE, "Error truncating File ID %u: %s", file_id, db_error(&myfs->db));
-        return false;
+        log_err(MODULE, "Error truncating File ID %u: Error getting current file size: %s", file_id, db_error(&myfs->db));
+        success = false;
+        goto done;
     }
 
     row = mysql_fetch_row(res);
@@ -293,39 +334,172 @@ myfs_db_file_set_content_size(myfs_t *myfs, unsigned int file_id, off_t size) {
 
     if (current_size == -1) {
         log_err(MODULE, "Error truncating File ID %u: Not found", file_id);
-        return false;
+        success = false;
+        goto done;
     }
 
     diff = size - current_size;
 
-    //Shrink or boner?
-    if (diff > 0) {
-        //Simply add blanks onto the end
+    //Update the file's size
+    if (diff != 0) {
         success = db_queryf(&myfs->db, "UPDATE `files`\n"
-                                       "SET `content`=CONCAT(`content`,REPEAT(' ',%zd))\n"
-                                       "WHERE `file_id`=%u",
-                                       diff,
-                                       file_id);
-
-        if (!success) {
-            log_err(MODULE, "Error truncating File ID %u: %s", file_id, db_error(&myfs->db));
-            return false;
-        }
-    }
-    else if (diff < 0) {
-        success = db_queryf(&myfs->db, "UPDATE `files`\n"
-                                       "SET `content`=SUBSTRING(`content`,0,%zd)\n"
+                                       "SET `size`=%zd\n"
                                        "WHERE `file_id`=%u",
                                        size,
                                        file_id);
 
         if (!success) {
-            log_err(MODULE, "Error truncating File ID %u: %s", file_id, db_error(&myfs->db));
-            return false;
+            log_err(MODULE, "Error truncating File ID %u: Error setting new file size to %zd: %s", file_id, size, db_error(&myfs->db));
+            goto done;
         }
     }
 
-    return true;
+    //Grow or shrink now.
+    if (diff > 0) {
+        left = diff;
+
+        //Get the last block, if there is one, and fill in any remaining space.
+        res = db_selectf(&myfs->db, "SELECT `file_data_id`,`index`,LENGTH(`data`)\n"
+                                    "FROM `file_data`\n"
+                                    "WHERE `file_id`=%u\n"
+                                    "ORDER BY `index` DESC\n"
+                                    "LIMIT 1",
+                                    file_id);
+
+        if (res == NULL) {
+            log_err(MODULE, "Error truncating File ID %u: Error getting last block: %s", file_id, db_error(&myfs->db));
+            success = false;
+            goto done;
+        }
+
+        row = mysql_fetch_row(res);
+        if (row != NULL) {
+            file_data_id = strtoul(row[0], NULL, 10);
+            index = strtoul(row[1], NULL, 10) + 1;
+            file_data_length = strtoul(row[2], NULL, 10);
+        }
+        mysql_free_result(res);
+
+        //If the last block has a data size smaller than the max block size, update this block.
+        if (file_data_id > 0) {
+            if (file_data_length < MYFS_FILE_BLOCK_SIZE) {
+                write_size = left;
+                if (write_size > MYFS_FILE_BLOCK_SIZE - file_data_length) {
+                    write_size = MYFS_FILE_BLOCK_SIZE - file_data_length;
+                }
+
+                success = db_queryf(&myfs->db, "UPDATE `file_data`\n"
+                                               "SET `data`=CONCAT(`data`,REPEAT(' ',%zd))\n"
+                                               "WHERE `file_data_id`=%u",
+                                               write_size,
+                                               file_data_id);
+
+                if (!success) {
+                    log_err(MODULE, "Error truncating File ID %u: Error updating last block: %s", file_id, db_error(&myfs->db));
+                    goto done;
+                }
+
+                left -= write_size;
+            }
+        }
+
+        //Now add blocks until the entire size has been written.
+        while (left > 0) {
+            write_size = left;
+            if (write_size > MYFS_FILE_BLOCK_SIZE) {
+                write_size = MYFS_FILE_BLOCK_SIZE;
+            }
+
+            success = db_queryf(&myfs->db, "INSERT INTO `file_data` (`file_id`,`index`,`data`)\n"
+                                           "VALUES (%u,%u,REPEAT(' ',%zd))",
+                                           file_id, index, write_size);
+
+            if (!success) {
+                log_err(MODULE, "Error truncating File ID %u: Error adding block %u: %s", file_id, index, db_error(&myfs->db));
+                goto done;
+            }
+
+            index++;
+            left -= write_size;
+        }
+    }
+    else if (diff < 0) {
+        left = diff * -1;
+
+        while (left > 0) {
+            write_size = left;
+            if (write_size > MYFS_FILE_BLOCK_SIZE) {
+                write_size = MYFS_FILE_BLOCK_SIZE;
+            }
+
+            //Get the last block and its size to determine if the block can be deleted or shrunk.
+            res = db_selectf(&myfs->db, "SELECT `file_data_id`,LENGTH(`data`)\n"
+                                        "FROM `file_data`\n"
+                                        "WHERE `file_id`=%u\n"
+                                        "ORDER BY `index` DESC\n"
+                                        "LIMIT 1",
+                                        file_id);
+
+            if (res == NULL) {
+                log_err(MODULE, "Error truncating File ID %u: Error getting last block: %s", file_id, db_error(&myfs->db));
+                success = false;
+                goto done;
+            }
+
+            file_data_id = 0;
+            file_data_length = 0;
+
+            row = mysql_fetch_row(res);
+            if (row == NULL) {
+                log_warn(MODULE, "Error truncating File ID %u: Expected %zd more bytes to truncate but found no more blocks", file_id, left);
+            }
+            else {
+                file_data_id = strtoul(row[0], NULL, 10);
+                file_data_length = strtoul(row[1], NULL, 10);
+            }
+            mysql_free_result(res);
+
+            if (file_data_id == 0) {
+                success = false;
+                goto done;
+            }
+
+            if (write_size >= file_data_length) {
+                //This entire block can be deleted.
+                success = db_queryf(&myfs->db, "DELETE FROM `file_data`\n"
+                                               "WHERE `file_data_id`=%u",
+                                               file_data_id);
+
+                if (!success) {
+                    log_err(MODULE, "Error truncating File ID %u: Failed to delete block: %s", file_id, db_error(&myfs->db));
+                    goto done;
+                }
+
+                left -= file_data_length;
+            }
+            else {
+                //The block needs to be shrunk.
+                success = db_queryf(&myfs->db, "UPDATE `file_data`\n"
+                                               "SET `data`=REPEAT(' ',%zd)\n"
+                                               "WHERE `file_data_id`=%u",
+                                               file_data_length - write_size,
+                                               file_data_id);
+
+                if (!success) {
+                    log_err(MODULE, "Error truncating File ID %u: Failed to shrink block: %s", file_id, db_error(&myfs->db));
+                    goto done;
+                }
+
+                left -= write_size;
+            }
+        }
+    }
+
+done:
+
+    db_transaction_stop(&myfs->db, success);
+
+    return success;
 }
 
 /**
@@ -373,7 +547,7 @@ myfs_db_file_query(myfs_t *myfs, unsigned int file_id, bool include_children) {
 
     fuse = fuse_get_context();
 
-    res = db_selectf(&myfs->db, "SELECT `file_id`,`name`,`parent_id`,`type`,`user`,`group`,`mode`,`last_accessed_on`,`last_modified_on`,`last_status_changed_on`,LENGTH(`content`)\n"
+    res = db_selectf(&myfs->db, "SELECT `file_id`,`name`,`parent_id`,`type`,`user`,`group`,`mode`,`size`,`last_accessed_on`,`last_modified_on`,`last_status_changed_on`\n"
                                 "FROM `files`\n"
                                 "WHERE `file_id`=%u",
                                 file_id);
@@ -405,14 +579,14 @@ myfs_db_file_query(myfs_t *myfs, unsigned int file_id, bool include_children) {
         switch (file->type) {
             case MYFS_FILE_TYPE_FILE:
                 file->st.st_nlink = 1;
-                file->st.st_size = strtoul(row[10], NULL, 10);
+                file->st.st_size = strtoul(row[7], NULL, 10);
                 break;
             case MYFS_FILE_TYPE_DIRECTORY:
                 file->st.st_nlink = 2;
                 break;
             case MYFS_FILE_TYPE_SOFT_LINK:
                 file->st.st_nlink = 1;
-                file->st.st_size = strtoul(row[10], NULL, 10);
+                file->st.st_size = strtoul(row[7], NULL, 10);
                 break;
             case MYFS_FILE_TYPE_INVALID:
                 break;
@@ -421,23 +595,41 @@ myfs_db_file_query(myfs_t *myfs, unsigned int file_id, bool include_children) {
         file->st.st_ino = file->file_id;
         ret = util_user_id(row[4], &file->st.st_uid);
         if (ret != 0) {
-            log_err(MODULE, "Error getting user '%s' for File ID %u: %s", row[4], file->file_id, strerror(ret));
-            log_err(MODULE, "Setting the user to the program's user[%u]", fuse->uid);
+            //Did not find the user in the database, fallback to the configured user
 
             //TODO: Make a config option on how to handle this condition?
-            file->st.st_uid = fuse->uid;
+            log_err(MODULE, "Error getting user '%s' for File ID %u: %s", row[4], file->file_id, strerror(ret));
+            log_err(MODULE, "Setting the user to the configured user '%s'", config_get("user"));
+
+            ret = util_user_id(config_get("user"), &file->st.st_uid);
+            if (ret != 0) {
+                //Did not find the configured user, use the UID from FUSE
+
+                log_err(MODULE, "Error getting user '%s' for File ID %u: %s", config_get("user"), file->file_id, strerror(ret));
+                log_err(MODULE, "Setting the user to the program's UID %u", fuse->uid);
+                file->st.st_uid = fuse->uid;
+            }
         }
         ret = util_group_id(row[5], &file->st.st_gid);
         if (ret != 0) {
-            log_err(MODULE, "Error getting group '%s' for File ID %u: %s", row[5], file->file_id, strerror(ret));
-            log_err(MODULE, "Setting the group to the program's group[%u]", fuse->gid);
+            //Did not find the group in the database, fallback to the configured group
 
             //TODO: Make a config option on how to handle this condition?
-            file->st.st_gid = fuse->gid;
+            log_err(MODULE, "Error getting group '%s' for File ID %u: %s", row[5], file->file_id, strerror(ret));
+            log_err(MODULE, "Setting the group to the configured group '%s'", config_get("group"));
+
+            ret = util_group_id(config_get("group"), &file->st.st_gid);
+            if (ret != 0) {
+                //Did not find the configured group, use the GID from FUSE
+
+                log_err(MODULE, "Error getting group '%s' for File ID %u: %s", config_get("group"), file->file_id, strerror(ret));
+                log_err(MODULE, "Setting the group to the configured group %u", fuse->gid);
+                file->st.st_gid = fuse->gid;
+            }
         }
-        file->st.st_atime = strtoll(row[7], NULL, 10);
-        file->st.st_mtime = strtoll(row[8], NULL, 10);
-        file->st.st_ctime = strtoll(row[9], NULL, 10);
+        file->st.st_atime = strtoll(row[8], NULL, 10);
+        file->st.st_mtime = strtoll(row[9], NULL, 10);
+        file->st.st_ctime = strtoll(row[10], NULL, 10);
     }
 
     mysql_free_result(res);

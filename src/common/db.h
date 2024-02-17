@@ -96,6 +96,14 @@ MYSQL_RES * db_select(db_t *db, const char *query, int len);
 MYSQL_RES * db_selectf(db_t *db, const char *fmt, ...);
 
 /**
+ * Gets the last inserted auto increment ID.
+ *
+ * @param[in] db The database context.
+ * @return The last inserted auto increment ID.
+ */
+unsigned long db_insert_id(db_t *db);
+
+/**
  * Determines if the database exists.
  *
  * @param[in] db The database context.
@@ -144,3 +152,14 @@ bool db_transaction_stop(db_t *db, bool commit);
  * @return The escaped string.
  */
 char * db_escape(db_t *db, const char *str, unsigned int *length);
+
+/**
+ * Escapes a string that's safe to use in queries. The string must be free'd after use. This
+ * should be used to escape binary data using the correct length.
+ *
+ * @param[in] db The database context.
+ * @param[in] str The string to escape.
+ * @param[in] length The length of the string to be escaped.
+ * @return The escaped string.
+ */
+char * db_escape_len(db_t *db, const char *str, unsigned int length);

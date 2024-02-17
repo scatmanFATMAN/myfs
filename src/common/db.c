@@ -154,6 +154,11 @@ db_selectf(db_t *db, const char *fmt, ...) {
     return res;
 }
 
+unsigned long
+db_insert_id(db_t *db) {
+    return mysql_insert_id(&db->mysql);
+}
+
 bool
 db_database_exists(db_t *db, const char *name, bool *exists) {
     MYSQL_RES *res;
@@ -229,6 +234,18 @@ db_escape(db_t *db, const char *str, unsigned int *length) {
     if (length != NULL) {
         *length = escaped_len;
     }
+
+    return escaped;
+}
+
+char *
+db_escape_len(db_t *db, const char *str, unsigned int length) {
+    char *escaped;
+
+    //mysql_real_escape_string() requires the new buffer to be (len * 2 + 1) size
+    escaped = malloc(length * 2 + 1);
+
+    mysql_real_escape_string(&db->mysql, escaped, str, length);
 
     return escaped;
 }

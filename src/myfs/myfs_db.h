@@ -17,10 +17,9 @@
  * @param[in] type The file type.
  * @param[in] parent_id The File ID of the parent the file should be created in.
  * @param[in] mode The mode to create the file with.
- * @param[in] content Any initial content for the file.
- * @return `true` if the file was created, otherwise `false`.
+ * @return The new File ID if the file was created, otherwise 0.
  */
-bool myfs_db_file_create(myfs_t *myfs, const char *name, myfs_file_type_t type, unsigned int parent_id, mode_t mode, const char *content);
+unsigned int myfs_db_file_create(myfs_t *myfs, const char *name, myfs_file_type_t type, unsigned int parent_id, mode_t mode);
 
 /**
  * Deletes a file from MariaDB. If this file is a parent to other files, all children will
@@ -31,6 +30,17 @@ bool myfs_db_file_create(myfs_t *myfs, const char *name, myfs_file_type_t type, 
  * @return `true` if the file was deleted, otherwise `false`.
  */
 bool myfs_db_file_delete(myfs_t *myfs, unsigned int file_id);
+
+/**
+ * Adds data to the file in MYFS_FILE_BLOCK_SIZE chunks.
+ *
+ * @param[in] myfs The MyFS context.
+ * @param[in] file_id The File ID of the file to add data to.
+ * @param[in] data The data to add.
+ * @param[in] len The total length of `data`.
+ * @return `true` is the data was added, otherwise `false`.
+ */
+bool myfs_db_file_add_data(myfs_t *myfs, unsigned int file_id, const char *data, size_t len);
 
 /**
  * Update the last accessed and last modified timestamps of the given File ID.
@@ -94,7 +104,7 @@ bool myfs_db_file_rename(myfs_t *myfs, unsigned int file_id, unsigned int parent
  * @param[out] len The length of `content`, or `NULL` to ignore.
  * @return The file content which must be free()'d or `NULL` if an error occurred.
  */
-char * myfs_db_file_get_content(myfs_t *myfs, unsigned int file_id, size_t *len);
+char * myfs_db_file_get_data(myfs_t *myfs, unsigned int file_id, size_t *len);
 
 /**
  * Sets the size of the content. This is going to be interesting functionality in a database.
@@ -104,7 +114,7 @@ char * myfs_db_file_get_content(myfs_t *myfs, unsigned int file_id, size_t *len)
  * @param[in] size The size to set the content to.
  * @return `true` if the file was updated, otherwise `false`.
  */
-bool myfs_db_file_set_content_size(myfs_t *myfs, unsigned int file_id, off_t size);
+bool myfs_db_file_truncate(myfs_t *myfs, unsigned int file_id, off_t size);
 
 /**
  * Queries MariaDB for a MyFS file's data, including its parent and possibly its children. If querying for
