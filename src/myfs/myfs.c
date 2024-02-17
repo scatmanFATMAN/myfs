@@ -13,7 +13,7 @@
 
 #define MODULE "MyFS"
 
-#define MYFS_TRACE
+//#define MYFS_TRACE
 #if defined(MYFS_TRACE)
 # define MYFS_LOG_TRACE(fmt, ...)                   \
         do {                                        \
@@ -767,8 +767,7 @@ myfs_release(const char *path, struct fuse_file_info *fi) {
 
 int
 myfs_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
-    MYSQL_RES *res;
-    MYSQL_ROW row;
+    ssize_t count;
     myfs_file_t *file;
     myfs_t *myfs;
 
@@ -786,37 +785,20 @@ myfs_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse
         MYFS_LOG_TRACE("New Size[%zu]", size);
     }
 
-    //TODO: How to handle when there are multiple calls to read(). Do we need to look up the file each time or only once? Maybe using open()?
-    //TODO: put queries in their own functions at the top with the others?
-    //MariaDB SUBSTRING() indexes are 1 based.
-    res = db_selectf(&myfs->db, "SELECT SUBSTRING(`content`,%zd,%zu)\n"
-                                "FROM `files`\n"
-                                "WHERE `file_id`=%u",
-                                offset + 1, size,
-                                file->file_id);
-
-    if (res == NULL) {
-        log_err(MODULE, "Error reading file '%s': %s", file->name, db_error(&myfs->db));
+    count = myfs_db_file_read(myfs, file->file_id, buffer, size, offset);
+    if (count == -1) {
         return -EIO;
     }
 
-    //Copy the MariaDB data into the output buffer
-    row = mysql_fetch_row(res);
-    memcpy(buffer, row[0], size);
-
-    mysql_free_result(res);
-
     MYFS_LOG_TRACE("End");
 
-    return size;
+    return count;
 }
 
 int
 myfs_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
     myfs_file_t *file;
     myfs_t *myfs;
-    unsigned int buffer_esc_len;
-    char *buffer_esc;
     bool success;
 
     MYFS_LOG_TRACE("Begin; Path[%s]; Size[%zu]; Offset[%zu]; FileHandle[%zu]; Append[%s]; FI[%p]", path, size, offset, fi->fh, fi->flags & O_APPEND ? "Yes" : "No", fi);
@@ -826,34 +808,15 @@ myfs_write(const char *path, const char *buffer, size_t size, off_t offset, stru
     //Get the file from the open file table
     file = myfs->files[fi->fh];
 
-    //Escape the buffer for MySQL.
-    buffer_esc = db_escape(&myfs->db, buffer, &buffer_esc_len);
-
-    //Update the file's content
-    //TODO: put queries in their own functions at the top with the others?
+    //Update the file's data
     if (fi->flags & O_APPEND || file->st.st_size == offset) {
-        //When O_APPEND is given or , file content is always written to the end, no matter what the offset is.
-        //I don't actually think O_APPEND needs to be checked anymore. It appears FUSE will position the offset at the end
-        //of the file.
-        //So we need to see if the offset given by FUSE is the size of the file, if so then use MariaDB's CONCAT
-        success = db_queryf(&myfs->db, "UPDATE `files`\n"
-                                       "SET `content`=CONCAT(`content`,'%s')\n"
-                                       "WHERE `file_id`=%u",
-                                       buffer_esc,
-                                       file->file_id);
+        success = myfs_db_file_append(myfs, file->file_id, buffer, size);
     }
     else {
-        success = db_queryf(&myfs->db, "UPDATE `files`\n"
-                                       "SET `content`=INSERT(`content`,%zd,%zu,'%s')\n"
-                                       "WHERE `file_id`=%u",
-                                       offset + 1, buffer_esc_len, buffer_esc,
-                                       file->file_id);
+        success = myfs_db_file_write(myfs, file->file_id, buffer, size, offset);
     }
 
-    free(buffer_esc);
-
     if (!success) {
-        log_err(MODULE, "Error writing to file '%s': %s", file->name, db_error(&myfs->db));
         return -EIO;
     }
 
@@ -1006,7 +969,7 @@ myfs_symlink(const char *target, const char *path) {
         return -EIO;
     }
 
-    success = myfs_db_file_add_data(myfs, file_id, target, strlen(target));
+    success = myfs_db_file_append(myfs, file_id, target, strlen(target));
     if (!success) {
         return -EIO;
     }
@@ -1018,10 +981,9 @@ myfs_symlink(const char *target, const char *path) {
 
 int
 myfs_readlink(const char *path, char *buf, size_t size) {
+    ssize_t count;
     myfs_file_t *file;
     myfs_t *myfs;
-    char *data;
-    size_t data_len;
 
     MYFS_LOG_TRACE("Begin; Path[%s]; Size[%zu]", path, size);
 
@@ -1037,23 +999,12 @@ myfs_readlink(const char *path, char *buf, size_t size) {
         return -EINVAL;
     }
 
-    data = myfs_db_file_get_data(myfs, file->file_id, &data_len);
+    count = myfs_db_file_read(myfs, file->file_id, buf, size, 0);
     myfs_file_free(file);
 
-    if (data == NULL) {
+    if (count <= 0) {
         return -EIO;
     }
-
-    //Truncate the data if it's larger than the buffer size (which includes space for '\0').
-    //Increase the data length by 1 to include the '\0' which makes math easier.
-    data_len++;
-    if (data_len > size) {
-        data_len = size;
-        data[data_len - 1] = '\0';
-    }
-
-    memcpy(buf, data, data_len);
-    free(data);
 
     MYFS_LOG_TRACE("End");
     return 0;

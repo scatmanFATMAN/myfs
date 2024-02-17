@@ -36,11 +36,23 @@ bool myfs_db_file_delete(myfs_t *myfs, unsigned int file_id);
  *
  * @param[in] myfs The MyFS context.
  * @param[in] file_id The File ID of the file to add data to.
- * @param[in] data The data to add.
+ * @param[in] data The data to write.
+ * @param[in] len The total length of `data`.
+ * @param[in] offset The offset where to begin writing.
+ * @return `true` is the data was added, otherwise `false`.
+ */
+bool myfs_db_file_write(myfs_t *myfs, unsigned int file_id, const char *data, size_t len, off_t offset);
+
+/**
+ * Appends data to the file in MYFS_FILE_BLOCK_SIZE chunks.
+ *
+ * @param[in] myfs The MyFS context.
+ * @param[in] file_id The File ID of the file to add data to.
+ * @param[in] data The data to write.
  * @param[in] len The total length of `data`.
  * @return `true` is the data was added, otherwise `false`.
  */
-bool myfs_db_file_add_data(myfs_t *myfs, unsigned int file_id, const char *data, size_t len);
+bool myfs_db_file_append(myfs_t *myfs, unsigned int file_id, const char *data, size_t len);
 
 /**
  * Update the last accessed and last modified timestamps of the given File ID.
@@ -101,10 +113,12 @@ bool myfs_db_file_rename(myfs_t *myfs, unsigned int file_id, unsigned int parent
  *
  * @param[in] myfs The MyFS context.
  * @param[in] file_id The File ID to get content for.
- * @param[out] len The length of `content`, or `NULL` to ignore.
- * @return The file content which must be free()'d or `NULL` if an error occurred.
+ * @param[in] buf The buffer to write the data to.
+ * @param[in] size The size of the buffer.
+ * @param[in] offset The offset where to begin reading.
+ * @return The amount of data actually read, or -1 if an error occurred.
  */
-char * myfs_db_file_get_data(myfs_t *myfs, unsigned int file_id, size_t *len);
+ssize_t myfs_db_file_read(myfs_t *myfs, unsigned int file_id, char *buf, size_t size, off_t offset);
 
 /**
  * Sets the size of the content. This is going to be interesting functionality in a database.

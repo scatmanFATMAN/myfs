@@ -72,7 +72,7 @@ myfs_db_file_delete(myfs_t *myfs, unsigned int file_id) {
 }
 
 bool
-myfs_db_file_add_data(myfs_t *myfs, unsigned int file_id, const char *data, size_t len) {
+myfs_db_file_write(myfs_t *myfs, unsigned int file_id, const char *data, size_t len, off_t offset) {
     char *data_esc;
     bool success;
     unsigned int index = 0;
@@ -115,6 +115,117 @@ myfs_db_file_add_data(myfs_t *myfs, unsigned int file_id, const char *data, size
     if (!success) {
         log_err(MODULE, "Error adding data for File ID %u: Failed updating the file size", file_id, db_error(&myfs->db));
     }
+
+    return success;
+}
+
+bool
+myfs_db_file_append(myfs_t *myfs, unsigned int file_id, const char *data, size_t len) {
+    unsigned int file_data_id = 0, index = 0, file_data_length = 0;
+    size_t write_size, written, left;
+    char *data_esc;
+    bool success;
+    MYSQL_RES *res;
+    MYSQL_ROW row;
+
+    success = db_transaction_start(&myfs->db);
+    if (!success) {
+        log_err(MODULE, "Error appending data to File ID %u: Failed starting transaction: %s", file_id, db_error(&myfs->db));
+        return false;
+    }
+
+    res = db_selectf(&myfs->db, "SELECT `file_data_id`,`index`,LENGTH(`data`)\n"
+                                "FROM `file_data`\n"
+                                "WHERE `file_id`=%u\n"
+                                "ORDER BY `index` DESC\n"
+                                "LIMIT 1",
+                                file_id);
+
+    if (res == NULL) {
+        log_err(MODULE, "Error appending data to File ID %u: Failed getting last block: %s", file_id, db_error(&myfs->db));
+        success = false;
+        goto done;
+    }
+
+    row = mysql_fetch_row(res);
+    if (row != NULL) {
+        file_data_id = strtoul(row[0], NULL, 10);
+        index = strtoul(row[1], NULL, 10);
+        file_data_length = strtoul(row[2], NULL, 10);
+    }
+    mysql_free_result(res);
+
+    //Update the file's size
+    success = db_queryf(&myfs->db, "UPDATE `files`\n"
+                                   "SET `size`=`size`+%zu\n"
+                                   "WHERE `file_id`=%u",
+                                   len,
+                                   file_id);
+
+    if (!success) {
+        log_err(MODULE, "Error appending data to File ID %u: Failed updating file size: %s", file_id, db_error(&myfs->db));
+        goto done;
+    }
+
+    written = 0;
+    left = len;
+
+    //Update the last block if there is one and it's not full.
+    if (file_data_id > 0) {
+        if (file_data_length < MYFS_FILE_BLOCK_SIZE) {
+            write_size = left;
+            if (write_size > MYFS_FILE_BLOCK_SIZE - file_data_length) {
+                write_size = MYFS_FILE_BLOCK_SIZE - file_data_length;
+            }
+
+            data_esc = db_escape_len(&myfs->db, data, write_size);
+
+            success = db_queryf(&myfs->db, "UPDATE `file_data`\n"
+                                           "SET `data`=CONCAT(`data`,'%s')\n"
+                                           "WHERE `file_data_id`=%u",
+                                           data_esc,
+                                           file_data_id);
+
+            free(data_esc);
+
+            if (!success) {
+                log_err(MODULE, "Error appending data to File ID %u: Failed updating last block: %s", file_id, db_error(&myfs->db));
+                goto done;
+            }
+
+            written += write_size;
+            left -= write_size;
+            index++;
+        }
+    }
+
+    //Add new blocks.
+    while (left > 0) {
+        write_size = left;
+        if (write_size > MYFS_FILE_BLOCK_SIZE) {
+            write_size = MYFS_FILE_BLOCK_SIZE;
+        }
+
+        data_esc = db_escape_len(&myfs->db, data + written, write_size);
+
+        success = db_queryf(&myfs->db, "INSERT INTO `file_data` (`file_id`,`index`,`data`)\n"
+                                       "VALUES (%u,%u,'%s')",
+                                       file_id, index, data_esc);
+
+        free(data_esc);
+
+        if (!success) {
+            log_err(MODULE, "Error appending data to File ID %u: Failed adding block %u: %s", file_id, index, db_error(&myfs->db));
+            goto done;
+        }
+
+        written += write_size;
+        left -= write_size;
+        index++;
+    }
+
+done:
+    db_transaction_stop(&myfs->db, success);
 
     return success;
 }
@@ -271,32 +382,71 @@ myfs_db_file_rename(myfs_t *myfs, unsigned int file_id, unsigned int parent_id, 
     return success;
 }
 
-char *
-myfs_db_file_get_data(myfs_t *myfs, unsigned int file_id, size_t *len) {
+ssize_t
+myfs_db_file_read(myfs_t *myfs, unsigned int file_id, char *buf, size_t size, off_t offset) {
+    unsigned int index, data_len, limit;
+    off_t page_offset;
+    ssize_t count;
+    const char *data;
     MYSQL_RES *res;
     MYSQL_ROW row;
-    char *content = NULL;
 
-    res = db_selectf(&myfs->db, "SELECT `content`,LENGTH(`content`)\n"
-                                "FROM `files`\n"
-                                "WHERE `file_id`=%u",
-                                file_id);
+    //Map the offset to which block to start reading from.
+    index = offset / MYFS_FILE_BLOCK_SIZE;
 
-    if (res == NULL) {
-        log_err(MODULE, "Error getting file content for File ID %u: %s", file_id, db_error(&myfs->db));
-        return NULL;
+    //Re-map the total offset to the offset per page.
+    //eg. If the block size is 4096:
+    //      offset 4097 becomes 1
+    //      offset 8197 becomes 5
+    page_offset = offset;
+    if (offset > MYFS_FILE_BLOCK_SIZE) {
+        page_offset -= MYFS_FILE_BLOCK_SIZE * index;
     }
 
-    row = mysql_fetch_row(res);
-    if (row != NULL) {
-        content = strdup(row[0]);
-        if (len != NULL) {
-            *len = strtoul(row[1], NULL, 10);
+    //Determine how many pages have to be read (1 full page or 2 pages).
+    limit = 1;
+    if (offset % MYFS_FILE_BLOCK_SIZE != 0) {
+        limit++;
+    }
+
+    res = db_selectf(&myfs->db, "SELECT `data`,LENGTH(`data`)\n"
+                                "FROM `file_data`\n"
+                                "WHERE `file_id`=%u\n"
+                                "AND `index`>=%u\n"
+                                "ORDER BY `index` ASC\n"
+                                "LIMIT %u",
+                                file_id,
+                                index,
+                                limit);
+
+    if (res == NULL) {
+        log_err(MODULE, "Error reading data for File ID %u: Failed getting block %u: %s", file_id, index, db_error(&myfs->db));
+        return -1;
+    }
+
+    count = 0;
+    while ((row = mysql_fetch_row(res)) != NULL) {
+        data = row[0];
+        data_len = strtoul(row[1], NULL, 10);
+
+        //Adjust the amount of data to read if needed.
+        if (data_len > size) {
+            data_len = size;
         }
+
+        //Copy the data into the output buffer.
+        memcpy(buf + count, data + page_offset, data_len);
+
+        //If a second page has to be read, reset the page offset to 0.
+        page_offset = 0;
+
+        count += data_len;
+        size -= count;
     }
 
     mysql_free_result(res);
-    return content;
+
+    return count;
 }
 
 bool
@@ -313,7 +463,7 @@ myfs_db_file_truncate(myfs_t *myfs, unsigned int file_id, off_t size) {
         return false;
     }
 
-    //First, get the current size of the content so we know if we need to shrink, grow, or do nothing.
+    //First, get the current file size so we know if we need to shrink, grow, or do nothing.
     res = db_selectf(&myfs->db, "SELECT `size`\n"
                                 "FROM `files`\n"
                                 "WHERE `file_id`=%u",
