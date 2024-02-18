@@ -549,7 +549,7 @@ myfs_db_file_truncate(myfs_t *myfs, unsigned int file_id, off_t size) {
     MYSQL_RES *res;
     MYSQL_ROW row;
     off_t current_size = -1, diff, write_size, file_data_length, left;
-    unsigned int file_data_id, index = 0;
+    unsigned int file_data_id, index;
     bool success;
 
     success = db_transaction_start(&myfs->db);
@@ -616,6 +616,10 @@ myfs_db_file_truncate(myfs_t *myfs, unsigned int file_id, off_t size) {
             success = false;
             goto done;
         }
+
+        file_data_id = 0;
+        index = 0;
+        file_data_length = 0;
 
         row = mysql_fetch_row(res);
         if (row != NULL) {

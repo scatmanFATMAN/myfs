@@ -597,7 +597,7 @@ myfs_unlink(const char *path) {
 
     myfs = (myfs_t *)fuse_get_context()->private_data;
 
-    file = myfs_file_get(myfs, path, true);
+    file = myfs_file_get(myfs, path, false);
     if (file == NULL) {
         return -ENOENT;
     }
