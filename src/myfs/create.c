@@ -548,8 +548,7 @@ create_get_sql_database_table1(char *dst, size_t size) {
                         "    `last_modified_on` bigint(20) NOT NULL,\n"
                         "    `last_status_changed_on` bigint(20) NOT NULL,\n"
                         "    PRIMARY KEY (`file_id`),\n"
-                        "    UNIQUE KEY `uk_files` (`name`,`parent_id`),\n"
-                        "    KEY `fk_files_parentid` (`parent_id`),\n"
+                        "    UNIQUE KEY `uk_files` (`parent_id`,`name`),\n"
                         "    CONSTRAINT `fk_files_parentid` FOREIGN KEY (`parent_id`) REFERENCES `files` (`file_id`) ON DELETE CASCADE ON UPDATE CASCADE\n"
                         ") ENGINE=%s DEFAULT CHARSET=%s COLLATE=%s;",
                         MYFS_FILE_NAME_MAX_LEN,
@@ -566,7 +565,7 @@ create_get_sql_database_table2(char *dst, size_t size) {
                         "    `index` int(10) unsigned NOT NULL,\n"
                         "    `data` varbinary(%u) NOT NULL,\n"
                         "    PRIMARY KEY (`file_data_id`),\n"
-                        "    KEY `fk_filedata_fileid` (`file_id`),\n"
+                        "    UNIQUE KEY `uk_filedata` (`file_id`,`index`),\n"
                         "    CONSTRAINT `fk_filedata_fileid` FOREIGN KEY (`file_id`) REFERENCES `files` (`file_id`) ON DELETE CASCADE ON UPDATE CASCADE\n"
                         ") ENGINE=%s DEFAULT CHARSET=%s COLLATE=%s;",
                         MYFS_FILE_BLOCK_SIZE,
