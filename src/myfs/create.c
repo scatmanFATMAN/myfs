@@ -350,6 +350,12 @@ create_run_create_config(create_params_t *params) {
     fprintf(f, "\n");
     fprintf(f, "# The mount point for the file system.\n");
     fprintf(f, "mount = %s\n", params->mount);
+    fprintf(f, "\n");
+    fprintf(f, "# Determines when reclaimer should run.\n");
+    fprintf(f, "#   0 is off.\n");
+    fprintf(f, "#   1 is optimistic and will run whenever it thinks nothing is going on.\n");
+    fprintf(f, "#   2 is aggressive and will run whenever a database operation occurs where space can be reclaimed.\n");
+    fprintf(f, "reclaimer_level = 1\n");
     fclose(f);
 
     params->config_created = true;
@@ -495,6 +501,7 @@ create_run() {
     bool success;
 
     memset(&params, 0, sizeof(params));
+    db_init(&params.db);
     strcpy(params.config_path, "/etc/myfs.d/myfs.conf");
     strcpy(params.mariadb_host, config_get("mariadb_host"));
     strcpy(params.mariadb_user_root, "root");
@@ -511,6 +518,7 @@ create_run() {
               create_run_create_database(&params);
 
     create_cleanup(&params, success);
+    db_free(&params.db);
 
     if (success) {
         printf("\n");

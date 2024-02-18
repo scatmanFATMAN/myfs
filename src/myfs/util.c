@@ -11,6 +11,11 @@
 #include "../common/string.h"
 #include "util.h"
 
+void
+util_sleep_ms(unsigned int ms) {
+    usleep(ms * 1000);
+}
+
 const char *
 util_basename(const char *path, char *dst, size_t size) {
     char *path_dupe, *name;

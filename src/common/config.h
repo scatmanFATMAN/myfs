@@ -164,7 +164,16 @@ bool config_equals(const char *name, const char *value);
 bool config_set(const char *name, const char *value);
 
 /**
- * Set the boolean value of a config parameter. The value is copied so you may pass in static strings.
+ * Set the integer value of a config parameter.
+ *
+ * @param[in] name The name of the parameter.
+ * @param[in] value The value of the parameter.
+ * @return `false` if the parameter was not found, otherwise `true`.
+ */
+bool config_set_int(const char *name, int value);
+
+/**
+ * Set the boolean value of a config parameter.
  *
  * @param[in] name The name of the parameter.
  * @param[in] value The value of the parameter.

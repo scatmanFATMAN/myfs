@@ -20,6 +20,20 @@ typedef struct {
 } db_t;
 
 /**
+ * Initializes the database context.
+ *
+ * @param[in] The database context.
+ */
+void db_init(db_t *db);
+
+/**
+ * Free's a database context.
+ *
+ * @param[in] db The database context.
+ */
+void db_free(db_t *db);
+
+/**
  * Connects to MariaDB.
  *
  * @param[in] db The database context.

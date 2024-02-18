@@ -1,4 +1,5 @@
 # MyFS - A FUSE file system integrated with MariaDB.
+Version 0.1.0
 
 ## What is this?
 MyFS is a user land file system written in C that implements the FUSE API to create a file system that manages its files in a MariaDB database. This is just a hobby project of mine because I was bored and wanted to learn something new, so I decided to learn FUSE. I didn't want to do something boring by simply creating files on the host file system again, so I thought creating them in a database might be kind of fun.
@@ -33,18 +34,20 @@ There are two ways to setup MyFS.
 + Create, delete, open, close, read, write, and truncate files.
 + Create, delete, and list directories.
 + Create and delete symbolic links.
-+ Stat and rename (or move) files and directories.
++ Stat, rename (or move), and copy files and directories.
 + Change ownership of files and directories. Ownership is stored by user/group name instead of UID and GID. This means multiple MyFS clients do not need their UIDs and GIDs sync'd up, only their names. I'm not sure if this is better or worse honestly, but we'll see. I can always support both methods or go back to only storing UID and GID.
 + Change permissions on files and directories.
 + Uses block/page based data storage for files.
 + Atomic reads and writes using MariaDB transactions.
 + Configurable logging to syslog and/or stdout.
 + Configurable options for how to handle MariaDB query failures.
++ Configurable options for how to reclaim disk space when DELETEs occur.
 + Easy to use installation and setup using the `--create` command line switch and answering prompts.
 
 ## Not (Yet) Supported Features
++ File caching. Possibly put writes onto a background thread.
 + Hard links.
-+ Auditing FUSE actions and putting them into the database might be cool.
++ Auditing FUSE actions and putting them into the database.
 + Another binary or another config option to run OPTIMIZE TABLE and reclaim disk space. Maybe do it on a schedule.
 + Encryption? However this can be achieved through MariaDB native encryption very easily.
 

@@ -66,9 +66,10 @@ myfs_db_file_delete(myfs_t *myfs, unsigned int file_id) {
 
     if (!success) {
         log_err(MODULE, "Error deleting File ID %u: %s", file_id, db_error(&myfs->db));
+        return false;
     }
 
-    return success;
+    return true;
 }
 
 bool

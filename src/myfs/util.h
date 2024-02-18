@@ -4,6 +4,13 @@
 #include <sys/types.h>
 
 /**
+ * Sleeps for a number of miliseconds.
+ *
+ * @param[in] ms The number of milliseconds.
+ */
+void util_sleep_ms(unsigned int ms);
+
+/**
  * Parses a path into its file name component and copies it into a buffer.
  *
  * @param[in] path The path to get the file name component of.

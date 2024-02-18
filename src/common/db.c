@@ -10,6 +10,15 @@
 #include <time.h>
 #include "db.h"
 
+void
+db_init(db_t *db) {
+    memset(db, 0, sizeof(*db));
+}
+
+void
+db_free(db_t *db) {
+}
+
 bool
 db_connect(db_t *db, const char *host, const char *user, const char *password, const char *database, unsigned int port) {
     my_bool reconnect = 1;

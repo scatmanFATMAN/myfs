@@ -9,6 +9,7 @@
 #include "../common/string.h"
 #include "util.h"
 #include "myfs_db.h"
+#include "reclaimer.h"
 #include "myfs.h"
 
 #define MODULE "MyFS"
@@ -179,6 +180,7 @@ myfs_connect(myfs_t *myfs) {
     MYSQL_RES *res;
     MYSQL_ROW row;
 
+    db_init(&myfs->db);
     success = db_connect(&myfs->db, config_get("mariadb_host"), config_get("mariadb_user"), config_get("mariadb_password"), config_get("mariadb_database"),config_get_uint("mariadb_port"));
 
     if (!success) {
@@ -218,6 +220,7 @@ myfs_disconnect(myfs_t *myfs) {
     uint64_t i;
 
     db_disconnect(&myfs->db);
+    db_free(&myfs->db);
 
     for (i = 0; i < MYFS_FILES_OPEN_MAX; i++) {
         if (myfs->files[i] != NULL) {
@@ -394,7 +397,6 @@ myfs_access(const char *path, int mode) {
     MYFS_LOG_TRACE("End");
 
     return 0;
-
 }
 
 int
@@ -416,6 +418,7 @@ myfs_truncate(const char *path, off_t size, struct fuse_file_info *fi) {
     }
 
     //file->st.st_size = size;
+    reclaimer_notify(RECLAIMER_ACTION_DELETE);
 
     MYFS_LOG_TRACE("End");
     return 0;
@@ -608,6 +611,8 @@ myfs_unlink(const char *path) {
         return -EIO;
     }
 
+    reclaimer_notify(RECLAIMER_ACTION_DELETE);
+
     MYFS_LOG_TRACE("End");
 
     return 0;
@@ -648,6 +653,8 @@ myfs_rmdir(const char *path) {
         return -EIO;
     }
 
+    reclaimer_notify(RECLAIMER_ACTION_DELETE);
+
     MYFS_LOG_TRACE("End");
     return 0;
 }
@@ -683,6 +690,8 @@ myfs_mkdir(const char *path, mode_t mode) {
     if (file_id == 0) {
         return -EIO;
     }
+
+    reclaimer_notify(RECLAIMER_ACTION_GENERAL);
 
     MYFS_LOG_TRACE("End");
 
@@ -727,6 +736,8 @@ myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
     if (ret != 0) {
         return ret;
     }
+
+    reclaimer_notify(RECLAIMER_ACTION_GENERAL);
 
     MYFS_LOG_TRACE("End");
 

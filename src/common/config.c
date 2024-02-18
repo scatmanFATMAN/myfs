@@ -416,6 +416,15 @@ config_set(const char *name, const char *value) {
 }
 
 bool
+config_set_int(const char *name, int value) {
+    char value_str[16];
+
+    snprintf(value_str, sizeof(value_str), "%d", value);
+
+    return config_set(name, value_str);
+}
+
+bool
 config_set_bool(const char *name, bool value) {
     char value_str[8];
 

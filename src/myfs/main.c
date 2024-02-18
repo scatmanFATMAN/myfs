@@ -16,9 +16,10 @@
 #define MODULE "Main"
 
 /** Return codes for main() */
-#define MYFS_RETURN_SUCCESS  0
-#define MYFS_RETURN_CONFIG   1
-#define MYFS_RETURN_DATABASE 2
+#define MYFS_RETURN_SUCCESS   0
+#define MYFS_RETURN_CONFIG    1
+#define MYFS_RETURN_DATABASE  2
+#define MYFS_RETURN_RECLAIMER 3
 
 static void
 config_error(const char *message) {
@@ -101,8 +102,25 @@ config_handle_log_syslog(const char *name, const char *value) {
     return true;
 }
 
+static bool
+config_handle_reclaimer_level(const char *name, const char *value) {
+    int level;
+
+    level = atoi(value);
+
+    switch (level) {
+        case RECLAIMER_LEVEL_OFF:
+        case RECLAIMER_LEVEL_OPTIMISTIC:
+        case RECLAIMER_LEVEL_AGGRESSIVE:
+            return config_set_int(name, level);
+    }
+
+    log_err(MODULE, "Error setting reclaimer level: %d is not valid", level);
+    return false;
+}
+
 static char **
-fargs_get(const char *name, int *fargc) {
+fargs_create(const char *name, int *fargc) {
     int index = 0;
     char **fargv;
 
@@ -232,6 +250,7 @@ main(int argc, char **argv) {
     config_set_default("mariadb_user",                  "--mariadb-user",               "mariadb_user",              "myfs",                    NULL,                            "The MariaDB user.");
     config_set_default("mount",                         "--mount",                      "mount",                     "/mnt/myfs",               NULL,                            "The mount point for the file system.");
     config_set_default_bool("print_create_sql",         "--print-create-sql",           NULL,                        false,                     config_handle_print_create_sql,  "Prints the SQL statements needed to create a MyFS database and exits.");
+    config_set_default_int("reclaimer_level",           "--reclaimer-level",            "reclaimer_level",           1,                         config_handle_reclaimer_level,   "Determines when reclaimer should run. 0 is off. 1 is optimistic and will run whenever it thinks nothing is going on. 2 is aggressive and will run whenever a database operation occurs where space can be reclaimed.");
     config_set_default("user",                          "--user",                       "user",                      user,                      NULL,                            "The Linux user to create files and directories with. If blank, the current user will be used.");
 
     //These command line configs should be parsed before the config file.
@@ -257,56 +276,60 @@ main(int argc, char **argv) {
         goto done;
     }
 
-    if (ret == 0) {
-        if (!myfs_connect(&myfs)) {
-            ret = MYFS_RETURN_DATABASE;
-            goto done;
-        }
+    success = myfs_connect(&myfs);
+    if (!success) {
+        ret = MYFS_RETURN_DATABASE;
+        goto done;
     }
 
-    if (ret == 0) {
-        memset(&operations, 0, sizeof(operations));
-        //operations.init = myfs_init;
-        //operations.destroy = myfs_destroy;
-        operations.statfs = myfs_statfs;
-        operations.getattr = myfs_getattr;
-        operations.access = myfs_access;
-        //setxattr
-        operations.truncate = myfs_truncate;
-        operations.utimens = myfs_utimens;
-        operations.chown = myfs_chown;
-        operations.chmod = myfs_chmod;
-        operations.opendir = myfs_opendir;
-        operations.releasedir = myfs_releasedir;
-        operations.readdir = myfs_readdir;
-        operations.unlink = myfs_unlink;
-        operations.rmdir = myfs_rmdir;
-        operations.mkdir = myfs_mkdir;
-        operations.create = myfs_create;
-        operations.flush = myfs_flush;
-        operations.open = myfs_open;
-        operations.release = myfs_release;
-        operations.read = myfs_read;
-        operations.write = myfs_write;
-        operations.rename = myfs_rename;
-        operations.symlink = myfs_symlink;
-        operations.readlink = myfs_readlink;
-
-        //Since MyFS has its own command line arguments, create a new argc/argv duo for FUSE. If we don't,
-        //FUSE will choke on MyFS's command line arguments. Likewise, MyFS will choke on FUSE arguments.
-        //all we really care about is -f <mount point>
-        fargv = fargs_get(argv[0], &fargc);
-
-        log_info(MODULE, "Running");
-        ret = fuse_main(fargc, fargv, &operations, &myfs);
-
-        fargs_free(fargc, fargv);
-
-        log_info(MODULE, "Goodbye");
+    success = reclaimer_start();
+    if (!success) {
+        ret = MYFS_RETURN_RECLAIMER;
+        goto done;
     }
+
+    memset(&operations, 0, sizeof(operations));
+    //operations.init = myfs_init;
+    //operations.destroy = myfs_destroy;
+    operations.statfs = myfs_statfs;
+    operations.getattr = myfs_getattr;
+    operations.access = myfs_access;
+    //setxattr
+    operations.truncate = myfs_truncate;
+    operations.utimens = myfs_utimens;
+    operations.chown = myfs_chown;
+    operations.chmod = myfs_chmod;
+    operations.opendir = myfs_opendir;
+    operations.releasedir = myfs_releasedir;
+    operations.readdir = myfs_readdir;
+    operations.unlink = myfs_unlink;
+    operations.rmdir = myfs_rmdir;
+    operations.mkdir = myfs_mkdir;
+    operations.create = myfs_create;
+    operations.flush = myfs_flush;
+    operations.open = myfs_open;
+    operations.release = myfs_release;
+    operations.read = myfs_read;
+    operations.write = myfs_write;
+    operations.rename = myfs_rename;
+    operations.symlink = myfs_symlink;
+    operations.readlink = myfs_readlink;
+
+    //Since MyFS has its own command line arguments, create a new argc/argv duo for FUSE. If we don't,
+    //FUSE will choke on MyFS's command line arguments. Likewise, MyFS will choke on FUSE arguments.
+    //all we really care about is -f <mount point>
+    fargv = fargs_create(argv[0], &fargc);
+
+    log_info(MODULE, "Running");
+    ret = fuse_main(fargc, fargv, &operations, &myfs);
+
+    fargs_free(fargc, fargv);
 
 done:
     myfs_disconnect(&myfs);
+    reclaimer_stop();
+
+    log_info(MODULE, "Goodbye");
 
     reclaimer_free();
     config_free();
