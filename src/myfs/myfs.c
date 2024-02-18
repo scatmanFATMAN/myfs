@@ -1027,6 +1027,14 @@ myfs_readlink(const char *path, char *buf, size_t size) {
         return -EIO;
     }
 
+    //Need this buffer to be NULL terminated so handle the edge case of filling the entire buffer.
+    //Since the test above proves count is not negative, it can be safely cased to size_t to avoid compiler warnings.
+    if ((size_t)count == size) {
+        count--;
+    }
+
+    buf[count] = '\0';
+
     MYFS_LOG_TRACE("End");
     return 0;
 }
