@@ -49,23 +49,21 @@ myfs_db_file_block_offset(off_t offset) {
 }
 
 /**
- * Takes a global offset and length and determines how many blocks it spans.
- * TODO: This needs improvement. An offset of 1 and size of 2 would return 2, but should only return 1.
+ * Takes length and determines how many blocks it spans.
  *
- * @param[in] offset The global offset.
- * @param[in[ len The length.
+ * @param[in] len The length.
  * @return The number of blocks.
  */
 static size_t
-myfs_db_file_block_count(off_t offset, size_t len) {
-    size_t limit;
+myfs_db_file_block_count(size_t len) {
+    size_t count;
 
-    limit = (len / MYFS_FILE_BLOCK_SIZE) + 1;
-    if (offset % MYFS_FILE_BLOCK_SIZE != 0) {
-        limit++;
+    count = len / MYFS_FILE_BLOCK_SIZE;
+    if (len % MYFS_FILE_BLOCK_SIZE != 0) {
+        count++;
     }
 
-    return limit;
+    return count;
 }
 
 unsigned int
@@ -145,7 +143,7 @@ myfs_db_file_write(myfs_t *myfs, unsigned int file_id, const char *data, size_t 
 
     index = myfs_db_file_block_index(offset);
     page_offset = myfs_db_file_block_offset(offset);
-    limit = myfs_db_file_block_count(offset, len);
+    limit = myfs_db_file_block_count(len);
 
     MYFSDB_LOG_TRACE("  Index[%u]; PageOffset[%zu]; Limit[%u]", index, page_offset, limit);
 
@@ -560,15 +558,20 @@ myfs_db_file_rename(myfs_t *myfs, unsigned int file_id, unsigned int parent_id, 
 
 ssize_t
 myfs_db_file_read(myfs_t *myfs, unsigned int file_id, char *buf, size_t size, off_t offset) {
-    unsigned int index, data_len, limit;
-    ssize_t count, page_offset;
+    unsigned int index, data_len, limit, page_offset;
+    ssize_t count;
     const char *data;
     MYSQL_RES *res;
     MYSQL_ROW row;
 
+    MYFSDB_LOG_TRACE("Begin");
+    MYFSDB_LOG_TRACE("  FileID[%u]; Size[%zu]; Offset[%zd]", file_id, size, offset);
+
     index = myfs_db_file_block_index(offset);
     page_offset = myfs_db_file_block_offset(offset);
-    limit = myfs_db_file_block_count(offset, size);
+    limit = myfs_db_file_block_count(size);
+
+    MYFSDB_LOG_TRACE("  Index[%u]; PageOffset[%u]; Limit[%u]", index, page_offset, limit);
 
     res = db_selectf(&myfs->db, "SELECT `data`,LENGTH(`data`)\n"
                                 "FROM `file_data`\n"
@@ -595,6 +598,8 @@ myfs_db_file_read(myfs_t *myfs, unsigned int file_id, char *buf, size_t size, of
             data_len = size;
         }
 
+        MYFSDB_LOG_TRACE("  Reading; PageOffset[%u]; Count[%zd]; DataLen[%u]", page_offset, count, data_len);
+
         //Copy the data into the output buffer.
         memcpy(buf + count, data + page_offset, data_len);
 
@@ -606,6 +611,9 @@ myfs_db_file_read(myfs_t *myfs, unsigned int file_id, char *buf, size_t size, of
     }
 
     mysql_free_result(res);
+
+    MYFSDB_LOG_TRACE("  Count[%zd]", count);
+    MYFSDB_LOG_TRACE("Done");
 
     return count;
 }
