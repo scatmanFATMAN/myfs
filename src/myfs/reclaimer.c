@@ -101,6 +101,8 @@ reclaimer_process(void *user_data) {
 
         next_try = 0;
 
+        log_debug(MODULE, "Runing");
+
         //Run the query to reclaim disk space.
         //OPTIMIZE TABLES returns a result set so it MUST be free'd otherwise an error will occur on the next query.
         res = db_selectf(&reclaimer.db, "OPTIMIZE TABLE `file_data`,`file`", 33);

@@ -9,6 +9,65 @@
 
 #define MODULE "MyFS DB"
 
+#define MYFSDB_TRACE
+#if defined(MYFSDB_TRACE)
+# define MYFSDB_LOG_TRACE(fmt, ...)                 \
+        do {                                        \
+            printf("[%s] ", __FUNCTION__);          \
+            printf(fmt, ##__VA_ARGS__);             \
+            printf("\n");                           \
+            fflush(stdout);                         \
+        } while(0)
+#else
+# define MYFSDB_LOG_TRACE(fmt, ...)
+#endif
+
+/**
+ * Takes a global offset and determines which block index the offset is in.
+ *
+ * @param[in] offset The global offset.
+ * @return The block index.
+ */
+static size_t
+myfs_db_file_block_index(size_t offset) {
+    return offset / MYFS_FILE_BLOCK_SIZE;
+}
+
+/**
+ * Takes a global offset and maps it to an offset within a block.
+ *
+ * Offset = 5    -> BlockOffset = 5
+ * Offset = 4096 -> BlockOffset = 0
+ * Offset = 4098 -> BlockOffset = 2
+ *
+ * @param[in] offset The global offset.
+ * @return The offset within a block.
+ */
+static size_t
+myfs_db_file_block_offset(off_t offset) {
+    return offset % MYFS_FILE_BLOCK_SIZE;
+}
+
+/**
+ * Takes a global offset and length and determines how many blocks it spans.
+ * TODO: This needs improvement. An offset of 1 and size of 2 would return 2, but should only return 1.
+ *
+ * @param[in] offset The global offset.
+ * @param[in[ len The length.
+ * @return The number of blocks.
+ */
+static size_t
+myfs_db_file_block_count(off_t offset, size_t len) {
+    size_t limit;
+
+    limit = (len / MYFS_FILE_BLOCK_SIZE) + 1;
+    if (offset % MYFS_FILE_BLOCK_SIZE != 0) {
+        limit++;
+    }
+
+    return limit;
+}
+
 unsigned int
 myfs_db_file_create(myfs_t *myfs, const char *name, myfs_file_type_t type, unsigned int parent_id, mode_t mode) {
     char *name_esc, *user_esc, *group_esc;
@@ -75,27 +134,20 @@ myfs_db_file_delete(myfs_t *myfs, unsigned int file_id) {
 bool
 myfs_db_file_write(myfs_t *myfs, unsigned int file_id, const char *data, size_t len, off_t offset) {
     unsigned int file_data_id, file_data_length, index, limit;
-    off_t page_offset;
-    size_t left, write_size, written;
+    size_t left, write_size, written, page_offset;
     char *data_esc;
     bool success;
     MYSQL_RES *res;
     MYSQL_ROW row;
 
-    //Map the offset to which block to start writing to
-    index = offset / MYFS_FILE_BLOCK_SIZE;
+    MYFSDB_LOG_TRACE("Begin");
+    MYFSDB_LOG_TRACE("  FileID[%u]; Len[%zu]; Offset[%zd]", file_id, len, offset);
 
-    //Re-map the page offset of the initial block to write to be relative the page.
-    page_offset = offset;
-    if (offset > MYFS_FILE_BLOCK_SIZE) {
-        page_offset -= MYFS_FILE_BLOCK_SIZE * index;
-    }
+    index = myfs_db_file_block_index(offset);
+    page_offset = myfs_db_file_block_offset(offset);
+    limit = myfs_db_file_block_count(offset, len);
 
-    //Determine how many pages have to be written to. If the offset is not on a page boundary, then another page will need to be written to.
-    limit = len / MYFS_FILE_BLOCK_SIZE;
-    if (offset % MYFS_FILE_BLOCK_SIZE != 0) {
-        limit++;
-    }
+    MYFSDB_LOG_TRACE("  Index[%u]; PageOffset[%zu]; Limit[%u]", index, page_offset, limit);
 
     success = db_transaction_start(&myfs->db);
     if (!success) {
@@ -120,6 +172,8 @@ myfs_db_file_write(myfs_t *myfs, unsigned int file_id, const char *data, size_t 
         goto done;
     }
 
+    MYFSDB_LOG_TRACE("  Found %lld blocks to update", mysql_num_rows(res));
+
     file_data_id = 0;
     file_data_length = 0;
     written = 0;
@@ -134,8 +188,11 @@ myfs_db_file_write(myfs_t *myfs, unsigned int file_id, const char *data, size_t 
         //The first write may start at any offset inside the block.
         if (written == 0) {
             write_size = left;
-            if (write_size > MYFS_FILE_BLOCK_SIZE - file_data_length) {
-                write_size = MYFS_FILE_BLOCK_SIZE - file_data_length;
+            //if (write_size > MYFS_FILE_BLOCK_SIZE - file_data_length) {
+            //    write_size = MYFS_FILE_BLOCK_SIZE - file_data_length;
+            //}
+            if (write_size > MYFS_FILE_BLOCK_SIZE - page_offset) {
+                write_size = MYFS_FILE_BLOCK_SIZE - page_offset;
             }
         }
         else {
@@ -145,11 +202,13 @@ myfs_db_file_write(myfs_t *myfs, unsigned int file_id, const char *data, size_t 
             }
         }
 
+        MYFSDB_LOG_TRACE("  Updating Block; Index[%u]; FileDataID[%u]; FileDataLength[%u]; WriteSize[%zu]; Written[%zu]; Left[%zu]", index, file_data_id, file_data_length, write_size, written, left);
+
         data_esc = db_escape_len(&myfs->db, data + written, write_size);
 
         //MariaDB indexes start at 1 so page_offset+1 is necessary
         success = db_queryf(&myfs->db, "UPDATE `file_data`\n"
-                                       "SET `data`=INSERT(`data`,%zd,%zd,'%s')\n"
+                                       "SET `data`=INSERT(`data`,%zu,%zu,'%s')\n"
                                        "WHERE `file_data_id`=%u",
                                        page_offset + 1, write_size, data_esc,
                                        file_data_id);
@@ -170,8 +229,12 @@ myfs_db_file_write(myfs_t *myfs, unsigned int file_id, const char *data, size_t 
 
     mysql_free_result(res);
 
+    MYFSDB_LOG_TRACE("  Left[%zu]; Written[%zu]", left, written);
+
     //Write any new blocks that need to be written.
     if (left > 0) {
+        MYFSDB_LOG_TRACE("  Adding block; Index[%u]", index);
+
         //If new blocks are being written, the file size will increase so do that now.
         success = db_queryf(&myfs->db, "UPDATE `files`\n"
                                        "SET `size`=`size`+%zu\n"
@@ -211,17 +274,23 @@ myfs_db_file_write(myfs_t *myfs, unsigned int file_id, const char *data, size_t 
 done:
     db_transaction_stop(&myfs->db, success);
 
+    MYFSDB_LOG_TRACE("  Written[%zd]", written);
+    MYFSDB_LOG_TRACE("End");
+
     return success;
 }
 
 bool
 myfs_db_file_append(myfs_t *myfs, unsigned int file_id, const char *data, size_t len) {
     unsigned int file_data_id = 0, index = 0, file_data_length = 0;
-    size_t write_size, written, left;
+    size_t write_size, written = 0, left;
     char *data_esc;
     bool success;
     MYSQL_RES *res;
     MYSQL_ROW row;
+
+    MYFSDB_LOG_TRACE("Begin");
+    MYFSDB_LOG_TRACE("  FileID[%u]; Len[%zu]", file_id, len);
 
     success = db_transaction_start(&myfs->db);
     if (!success) {
@@ -229,6 +298,7 @@ myfs_db_file_append(myfs_t *myfs, unsigned int file_id, const char *data, size_t
         return false;
     }
 
+    //Get the latest block if there is one
     res = db_selectf(&myfs->db, "SELECT `file_data_id`,`index`,LENGTH(`data`)\n"
                                 "FROM `file_data`\n"
                                 "WHERE `file_id`=%u\n"
@@ -249,6 +319,8 @@ myfs_db_file_append(myfs_t *myfs, unsigned int file_id, const char *data, size_t
         file_data_length = strtoul(row[2], NULL, 10);
     }
     mysql_free_result(res);
+
+    MYFSDB_LOG_TRACE("  FileDataID[%u]; Index[%u]; FileDataLength[%u]", file_data_id, index, file_data_length);
 
     //Update the file's size
     success = db_queryf(&myfs->db, "UPDATE `files`\n"
@@ -273,6 +345,8 @@ myfs_db_file_append(myfs_t *myfs, unsigned int file_id, const char *data, size_t
                 write_size = MYFS_FILE_BLOCK_SIZE - file_data_length;
             }
 
+            MYFSDB_LOG_TRACE("  Updating Last Block; Index[%u]; WriteSize[%zu]", index, write_size);
+
             data_esc = db_escape_len(&myfs->db, data, write_size);
 
             success = db_queryf(&myfs->db, "UPDATE `file_data`\n"
@@ -290,8 +364,10 @@ myfs_db_file_append(myfs_t *myfs, unsigned int file_id, const char *data, size_t
 
             written += write_size;
             left -= write_size;
-            index++;
         }
+
+        //Next block will be new, increase the index regardless of whether we were able to update the last block or not.
+        index++;
     }
 
     //Add new blocks.
@@ -300,6 +376,8 @@ myfs_db_file_append(myfs_t *myfs, unsigned int file_id, const char *data, size_t
         if (write_size > MYFS_FILE_BLOCK_SIZE) {
             write_size = MYFS_FILE_BLOCK_SIZE;
         }
+
+        MYFSDB_LOG_TRACE("  Adding Block; Index[%u]; WriteSize[%zu]; Written[%zu]", index, write_size, written);
 
         data_esc = db_escape_len(&myfs->db, data + written, write_size);
 
@@ -321,6 +399,9 @@ myfs_db_file_append(myfs_t *myfs, unsigned int file_id, const char *data, size_t
 
 done:
     db_transaction_stop(&myfs->db, success);
+
+    MYFSDB_LOG_TRACE("  Written[%zu]", written);
+    MYFSDB_LOG_TRACE("End");
 
     return success;
 }
@@ -480,29 +561,14 @@ myfs_db_file_rename(myfs_t *myfs, unsigned int file_id, unsigned int parent_id, 
 ssize_t
 myfs_db_file_read(myfs_t *myfs, unsigned int file_id, char *buf, size_t size, off_t offset) {
     unsigned int index, data_len, limit;
-    off_t page_offset;
-    ssize_t count;
+    ssize_t count, page_offset;
     const char *data;
     MYSQL_RES *res;
     MYSQL_ROW row;
 
-    //Map the offset to which block to start reading from.
-    index = offset / MYFS_FILE_BLOCK_SIZE;
-
-    //Re-map the total offset to the offset per page.
-    //eg. If the block size is 4096:
-    //      offset 4097 becomes 1
-    //      offset 8197 becomes 5
-    page_offset = offset;
-    if (offset > MYFS_FILE_BLOCK_SIZE) {
-        page_offset -= MYFS_FILE_BLOCK_SIZE * index;
-    }
-
-    //Determine how many pages have to be read (1 full page or 2 pages).
-    limit = 1;
-    if (offset % MYFS_FILE_BLOCK_SIZE != 0) {
-        limit++;
-    }
+    index = myfs_db_file_block_index(offset);
+    page_offset = myfs_db_file_block_offset(offset);
+    limit = myfs_db_file_block_count(offset, size);
 
     res = db_selectf(&myfs->db, "SELECT `data`,LENGTH(`data`)\n"
                                 "FROM `file_data`\n"

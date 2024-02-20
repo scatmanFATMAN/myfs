@@ -19,7 +19,7 @@ static log_t log;
 
 void
 log_init() {
-    log.severity = LOG_SEVERITY_INFO;
+    log.severity = LOG_SEVERITY_DEBUG;
     log.to_stdout = true;
     log.to_syslog = false;
 }

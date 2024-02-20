@@ -48,14 +48,13 @@ There are two ways to setup MyFS.
 + File caching. Possibly put writes onto a background thread.
 + Hard links.
 + Auditing FUSE actions and putting them into the database.
-+ Another binary or another config option to run OPTIMIZE TABLE and reclaim disk space. Maybe do it on a schedule.
 + Encryption? However this can be achieved through MariaDB native encryption very easily.
 
 ## Support
 + FUSE
   - [x] Version 3
 + Database
-  - [x] MariaDB 10.3.x
+  - [x] MariaDB 10.x
 + Operating System
   - [x] Ubuntu 20.04.6
 
